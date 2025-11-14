@@ -1,3 +1,5 @@
+// Thay bằng URL Railway thực tế của bạn
+const API_BASE_URL = 'https://your-app-name.railway.app';
 import axios from 'axios';
 
 // Thay bằng URL Railway của bạn
