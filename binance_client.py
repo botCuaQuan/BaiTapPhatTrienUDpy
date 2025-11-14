@@ -25,7 +25,6 @@ def setup_logging():
 
 logger = setup_logging()
 
-
 ssl._create_default_https_context = ssl._create_unverified_context
 
 def sign(query, api_secret):
@@ -35,6 +34,7 @@ def sign(query, api_secret):
     except Exception as e:
         logger.error(f"Lỗi tạo chữ ký: {str(e)}")
         return ""
+
 def binance_api_request(url, method='GET', params=None, headers=None):
     max_retries = 3
     for attempt in range(max_retries):
@@ -54,7 +54,6 @@ def binance_api_request(url, method='GET', params=None, headers=None):
                 data = urllib.parse.urlencode(params).encode() if params else None
                 req = urllib.request.Request(url, data=data, headers=headers, method=method)
             
-            # Tăng timeout và thêm retry logic
             with urllib.request.urlopen(req, timeout=30) as response:
                 if response.status == 200:
                     return json.loads(response.read().decode())
@@ -93,6 +92,37 @@ def binance_api_request(url, method='GET', params=None, headers=None):
     logger.error(f"Không thể thực hiện yêu cầu API sau {max_retries} lần thử")
     return None
 
+def get_all_usdc_pairs(limit=100):
+    try:
+        url = "https://fapi.binance.com/fapi/v1/exchangeInfo"
+        data = binance_api_request(url)
+        if not data:
+            logger.warning("Không lấy được dữ liệu từ Binance, trả về danh sách rỗng")
+            return []
+        
+        usdc_pairs = []
+        for symbol_info in data.get('symbols', []):
+            symbol = symbol_info.get('symbol', '')
+            if symbol.endswith('USDC') and symbol_info.get('status') == 'TRADING':
+                usdc_pairs.append(symbol)
+        
+        logger.info(f"✅ Lấy được {len(usdc_pairs)} coin USDC từ Binance")
+        return usdc_pairs[:limit] if limit else usdc_pairs
+        
+    except Exception as e:
+        logger.error(f"❌ Lỗi lấy danh sách coin từ Binance: {str(e)}")
+        return []
+
+def _last_closed_1m_quote_volume(symbol):
+    data = binance_api_request(
+        "https://fapi.binance.com/fapi/v1/klines",
+        params={"symbol": symbol, "interval": "1m", "limit": 2}
+    )
+    if not data or len(data) < 2:
+        return None
+    k = data[-2]               # nến 1m đã đóng gần nhất
+    return float(k[7])         # quoteVolume (USDC)
+
 def get_max_leverage(symbol, api_key, api_secret):
     """Lấy đòn bẩy tối đa cho một symbol"""
     try:
@@ -103,7 +133,6 @@ def get_max_leverage(symbol, api_key, api_secret):
         
         for s in data['symbols']:
             if s['symbol'] == symbol.upper():
-                # Tìm thông tin đòn bẩy từ filters
                 for f in s['filters']:
                     if f['filterType'] == 'LEVERAGE':
                         if 'maxLeverage' in f:
@@ -248,6 +277,7 @@ def get_current_price(symbol):
     except Exception as e:
         logger.error(f"💰 Lỗi lấy giá {symbol}: {str(e)}")
     return 0
+
 def get_positions(symbol=None, api_key=None, api_secret=None):
     "Kiểm tra các vị thế đang có trên binance"
     try:
