@@ -781,9 +781,6 @@ class BotManager:
                     
                     bot_class = GlobalMarketBot
                     
-                    if not bot_class:
-                        continue
-                    
                     bot = bot_class(
                         symbol, lev, percent, tp, sl, roi_trigger, self.ws_manager,
                         self.api_key, self.api_secret,
@@ -799,9 +796,6 @@ class BotManager:
                         continue
                     
                     bot_class = GlobalMarketBot
-                    
-                    if not bot_class:
-                        continue
                     
                     bot = bot_class(
                         None, lev, percent, tp, sl, roi_trigger, self.ws_manager,
