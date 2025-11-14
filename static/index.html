@@ -3,822 +3,146 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Trading Bot System</title>
-    
-    <!-- PWA Meta Tags -->
-    <meta name="theme-color" content="#764ba2">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="apple-mobile-web-app-title" content="TradingBot">
-    <link rel="manifest" href="/static/manifest.json">
-    <link rel="apple-touch-icon" href="/static/icon-192.png">
-    
+    <title>Trading Bot App</title>
     <style>
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
         }
-        
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            padding: 15px;
             color: white;
+            padding: 20px;
+            min-height: 100vh;
         }
-        
         .container {
-            max-width: 1200px;
+            max-width: 800px;
             margin: 0 auto;
         }
-        
         .header {
-            background: rgba(255, 255, 255, 0.1);
-            backdrop-filter: blur(10px);
-            border-radius: 15px;
-            padding: 20px;
-            margin-bottom: 20px;
-            border: 1px solid rgba(255, 255, 255, 0.2);
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            flex-wrap: wrap;
-            gap: 15px;
-        }
-        
-        .header h1 {
-            font-size: 24px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-        
-        .connection-status {
-            padding: 8px 16px;
-            border-radius: 20px;
-            font-size: 12px;
-            font-weight: bold;
-        }
-        
-        .connected {
-            background: rgba(76, 175, 80, 0.3);
-            border: 1px solid rgba(76, 175, 80, 0.5);
-        }
-        
-        .disconnected {
-            background: rgba(244, 67, 54, 0.3);
-            border: 1px solid rgba(244, 67, 54, 0.5);
-        }
-        
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-            gap: 12px;
-            margin-bottom: 20px;
-        }
-        
-        .stat-card {
-            background: rgba(255, 255, 255, 0.1);
-            backdrop-filter: blur(10px);
-            border-radius: 12px;
-            padding: 15px;
             text-align: center;
-            border: 1px solid rgba(255, 255, 255, 0.2);
+            margin-bottom: 30px;
         }
-        
-        .stat-value {
-            font-size: 20px;
-            font-weight: bold;
-            margin: 5px 0;
-        }
-        
-        .stat-label {
-            font-size: 11px;
-            opacity: 0.8;
-        }
-        
-        .positive { color: #4CAF50; }
-        .negative { color: #f44336; }
-        .neutral { color: #ffeb3b; }
-        
-        .main-content {
-            display: grid;
-            grid-template-columns: 1fr 2fr;
-            gap: 20px;
-        }
-        
-        @media (max-width: 768px) {
-            .main-content {
-                grid-template-columns: 1fr;
-            }
-            
-            .stats-grid {
-                grid-template-columns: repeat(2, 1fr);
-            }
-            
-            .header {
-                flex-direction: column;
-                text-align: center;
-            }
-        }
-        
-        .panel {
-            background: rgba(255, 255, 255, 0.1);
+        .card {
+            background: rgba(255,255,255,0.1);
             backdrop-filter: blur(10px);
             border-radius: 15px;
-            padding: 20px;
-            border: 1px solid rgba(255, 255, 255, 0.2);
-        }
-        
-        .panel h2 {
+            padding: 30px;
             margin-bottom: 20px;
-            font-size: 20px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
+            border: 1px solid rgba(255,255,255,0.2);
         }
-        
+        .btn {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            width: 100%;
+            margin: 10px 0;
+        }
         .form-group {
             margin-bottom: 15px;
         }
-        
         .form-group label {
             display: block;
-            margin-bottom: 8px;
-            font-size: 14px;
-            font-weight: 500;
+            margin-bottom: 5px;
         }
-        
-        .form-control {
+        .form-group input {
             width: 100%;
             padding: 12px;
-            border: 1px solid rgba(255, 255, 255, 0.3);
+            border: 1px solid rgba(255,255,255,0.3);
             border-radius: 8px;
-            background: rgba(255, 255, 255, 0.1);
+            background: rgba(255,255,255,0.1);
             color: white;
-            font-size: 14px;
-        }
-        
-        .form-control:focus {
-            outline: none;
-            border-color: #667eea;
-            background: rgba(255, 255, 255, 0.15);
-        }
-        
-        .form-control::placeholder {
-            color: rgba(255, 255, 255, 0.6);
-        }
-        
-        .btn {
-            background: #667eea;
-            color: white;
-            border: none;
-            padding: 12px 20px;
-            border-radius: 8px;
-            cursor: pointer;
-            font-size: 14px;
-            font-weight: 600;
-            transition: all 0.3s ease;
-            width: 100%;
-        }
-        
-        .btn:hover {
-            background: #5a6fd8;
-            transform: translateY(-2px);
-        }
-        
-        .btn:active {
-            transform: translateY(0);
-        }
-        
-        .btn-danger {
-            background: #f44336;
-        }
-        
-        .btn-danger:hover {
-            background: #da190b;
-        }
-        
-        .btn-success {
-            background: #4CAF50;
-        }
-        
-        .btn-success:hover {
-            background: #45a049;
-        }
-        
-        .bot-list {
-            max-height: 600px;
-            overflow-y: auto;
-        }
-        
-        .bot-card {
-            background: rgba(255, 255, 255, 0.05);
-            border-radius: 12px;
-            padding: 15px;
-            margin-bottom: 12px;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-        }
-        
-        .bot-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 12px;
-            flex-wrap: wrap;
-            gap: 10px;
-        }
-        
-        .bot-id {
-            font-weight: bold;
-            font-size: 14px;
-            flex: 1;
-            min-width: 200px;
-        }
-        
-        .bot-status {
-            padding: 6px 12px;
-            border-radius: 15px;
-            font-size: 11px;
-            font-weight: bold;
-        }
-        
-        .status-searching { 
-            background: rgba(255, 152, 0, 0.3); 
-            border: 1px solid rgba(255, 152, 0, 0.5);
-        }
-        .status-waiting { 
-            background: rgba(33, 150, 243, 0.3); 
-            border: 1px solid rgba(33, 150, 243, 0.5);
-        }
-        .status-open { 
-            background: rgba(76, 175, 80, 0.3); 
-            border: 1px solid rgba(76, 175, 80, 0.5);
-        }
-        
-        .bot-details {
-            font-size: 12px;
-            color: rgba(255, 255, 255, 0.9);
-            margin-bottom: 12px;
-        }
-        
-        .bot-details div {
-            margin-bottom: 4px;
-        }
-        
-        .detail-label {
-            font-weight: bold;
-            color: rgba(255, 255, 255, 0.7);
-        }
-        
-        .tab-container {
-            margin-bottom: 20px;
-        }
-        
-        .tabs {
-            display: flex;
-            background: rgba(255, 255, 255, 0.1);
-            border-radius: 10px;
-            padding: 5px;
-            margin-bottom: 15px;
-        }
-        
-        .tab {
-            flex: 1;
-            padding: 10px;
-            text-align: center;
-            cursor: pointer;
-            border-radius: 5px;
-            transition: background 0.3s;
-            font-size: 14px;
-        }
-        
-        .tab.active {
-            background: #667eea;
-        }
-        
-        .tab-content {
-            display: none;
-        }
-        
-        .tab-content.active {
-            display: block;
-        }
-        
-        .empty-state {
-            text-align: center;
-            padding: 40px 20px;
-            color: rgba(255, 255, 255, 0.7);
-        }
-        
-        .empty-state .icon {
-            font-size: 48px;
-            margin-bottom: 15px;
-        }
-        
-        .install-prompt {
-            position: fixed;
-            bottom: 20px;
-            right: 20px;
-            background: rgba(255, 255, 255, 0.95);
-            color: #333;
-            padding: 15px;
-            border-radius: 10px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-            z-index: 1000;
-            max-width: 300px;
-            display: none;
-        }
-        
-        .install-prompt button {
-            background: #4CAF50;
-            color: white;
-            border: none;
-            padding: 8px 16px;
-            border-radius: 5px;
-            cursor: pointer;
-            margin-top: 10px;
-            width: 100%;
-        }
-        
-        /* Splash screen */
-        .splash-screen {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            z-index: 9999;
-            transition: opacity 0.5s ease;
-        }
-        
-        .splash-screen.hidden {
-            opacity: 0;
-            pointer-events: none;
-        }
-        
-        .splash-logo {
-            font-size: 64px;
-            margin-bottom: 20px;
-        }
-        
-        .splash-text {
-            font-size: 24px;
-            font-weight: bold;
-        }
-        
-        .loading-spinner {
-            width: 40px;
-            height: 40px;
-            border: 4px solid rgba(255,255,255,0.3);
-            border-top: 4px solid white;
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
-            margin-top: 20px;
-        }
-        
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
         }
     </style>
 </head>
 <body>
-    <!-- Splash Screen -->
-    <div id="splashScreen" class="splash-screen">
-        <div class="splash-logo">🤖</div>
-        <div class="splash-text">Trading Bot</div>
-        <div class="loading-spinner"></div>
-    </div>
-
     <div class="container">
         <div class="header">
-            <h1>🤖 Trading Bot System</h1>
-            <div class="connection-status disconnected" id="connectionStatus">
-                Đang kết nối...
-            </div>
+            <h1>🤖 Trading Bot Interface</h1>
+            <p>Kết nối Binance và bắt đầu giao dịch</p>
         </div>
-        
-        <div class="stats-grid" id="statsGrid">
-            <!-- Stats will be populated by JavaScript -->
-        </div>
-        
-        <div class="main-content">
-            <div class="panel">
-                <h2>🚀 Thêm Bot Mới</h2>
-                
-                <div class="tab-container">
-                    <div class="tabs">
-                        <div class="tab active" data-tab="static">Bot Tĩnh</div>
-                        <div class="tab" data-tab="dynamic">Bot Động</div>
-                    </div>
-                    
-                    <div class="tab-content active" id="static-tab">
-                        <div class="form-group">
-                            <label>Symbol (Coin):</label>
-                            <input type="text" class="form-control" id="symbol" placeholder="Ví dụ: BTCUSDC" value="BTCUSDC">
-                        </div>
-                    </div>
-                    
-                    <div class="tab-content" id="dynamic-tab">
-                        <div class="form-group">
-                            <label>Số lượng bot:</label>
-                            <input type="number" class="form-control" id="botCount" value="1" min="1" max="10">
-                        </div>
-                    </div>
-                </div>
-                
-                <div class="form-group">
-                    <label>Đòn bẩy:</label>
-                    <input type="number" class="form-control" id="leverage" value="10" min="1" max="100">
-                </div>
-                
-                <div class="form-group">
-                    <label>% Số dư mỗi lệnh:</label>
-                    <input type="number" class="form-control" id="percent" value="5" min="1" max="100" step="0.1">
-                </div>
-                
-                <div class="form-group">
-                    <label>Take Profit (%):</label>
-                    <input type="number" class="form-control" id="takeProfit" value="100" min="1" step="1">
-                </div>
-                
-                <div class="form-group">
-                    <label>Stop Loss (%):</label>
-                    <input type="number" class="form-control" id="stopLoss" value="50" min="0" step="1">
-                </div>
-                
-                <div class="form-group">
-                    <label>ROI Trigger (% - Tùy chọn):</label>
-                    <input type="number" class="form-control" id="roiTrigger" placeholder="Để trống nếu không dùng">
-                </div>
-                
-                <button class="btn btn-success" id="addBotBtn">➕ Thêm Bot</button>
-                <button class="btn btn-danger" id="stopAllBtn" style="margin-top: 10px;">⛔ Dừng Tất Cả</button>
-            </div>
-            
-            <div class="panel">
-                <h2>🤖 Danh Sách Bot Đang Chạy</h2>
-                <div class="bot-list" id="botList">
-                    <div class="empty-state">
-                        <div class="icon">🤖</div>
-                        <div>Chưa có bot nào đang chạy</div>
-                        <div style="font-size: 11px; margin-top: 5px;">Thêm bot mới để bắt đầu giao dịch</div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
 
-    <!-- Install Prompt -->
-    <div id="installPrompt" class="install-prompt">
-        <div style="font-weight: bold; margin-bottom: 8px;">📱 Cài đặt App</div>
-        <div style="font-size: 12px; margin-bottom: 10px;">Cài đặt Trading Bot trên thiết bị của bạn để sử dụng nhanh hơn</div>
-        <button id="installButton">Cài đặt ngay</button>
-        <button id="dismissInstall" style="background: #666; margin-top: 5px;">Bỏ qua</button>
+        <div class="card">
+            <h2>🔐 Kết nối Binance</h2>
+            <div class="form-group">
+                <label>API Key:</label>
+                <input type="text" id="apiKey" placeholder="Nhập API Key">
+            </div>
+            <div class="form-group">
+                <label>API Secret:</label>
+                <input type="password" id="apiSecret" placeholder="Nhập API Secret">
+            </div>
+            <button class="btn" onclick="connect()">🔗 Kết nối Binance</button>
+        </div>
+
+        <div class="card">
+            <h2>📊 System Status</h2>
+            <div id="status">
+                <p>Đang tải thông tin hệ thống...</p>
+            </div>
+        </div>
     </div>
 
     <script>
-        // Biến toàn cục
-        let currentTab = 'static';
-        let ws = null;
-        let deferredPrompt = null;
-
-        // Ẩn splash screen sau khi load
-        window.addEventListener('load', function() {
-            setTimeout(() => {
-                document.getElementById('splashScreen').classList.add('hidden');
-                setTimeout(() => {
-                    document.getElementById('splashScreen').style.display = 'none';
-                }, 500);
-            }, 1000);
-        });
-
-        // Tab handling
-        document.querySelectorAll('.tab').forEach(tab => {
-            tab.addEventListener('click', () => {
-                document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-                document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
-                
-                tab.classList.add('active');
-                document.getElementById(`${tab.dataset.tab}-tab`).classList.add('active');
-                currentTab = tab.dataset.tab;
-            });
-        });
-
-        // WebSocket connection
-        function connectWebSocket() {
-            const userId = "user_001";
-            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const wsUrl = `${protocol}//${window.location.host}/ws/${userId}`;
+        async function connect() {
+            const apiKey = document.getElementById('apiKey').value;
+            const apiSecret = document.getElementById('apiSecret').value;
             
-            ws = new WebSocket(wsUrl);
-            
-            ws.onopen = () => {
-                console.log('WebSocket connected');
-                document.getElementById('connectionStatus').className = 'connection-status connected';
-                document.getElementById('connectionStatus').textContent = '🟢 Đã kết nối';
-            };
-            
-            ws.onclose = () => {
-                console.log('WebSocket disconnected');
-                document.getElementById('connectionStatus').className = 'connection-status disconnected';
-                document.getElementById('connectionStatus').textContent = '🔴 Mất kết nối';
-                
-                // Thử kết nối lại sau 5 giây
-                setTimeout(connectWebSocket, 5000);
-            };
-            
-            ws.onmessage = (event) => {
-                try {
-                    const data = JSON.parse(event.data);
-                    if (data.type === 'update') {
-                        updateStats(data.system_info);
-                        updateBotList(data.bots_info);
-                    }
-                } catch (error) {
-                    console.error('Error parsing WebSocket message:', error);
-                }
-            };
-            
-            ws.onerror = (error) => {
-                console.error('WebSocket error:', error);
-            };
-        }
-
-        function updateStats(systemInfo) {
-            const statsGrid = document.getElementById('statsGrid');
-            
-            if (!systemInfo || Object.keys(systemInfo).length === 0) {
-                statsGrid.innerHTML = '<div class="stat-card"><div class="stat-label">Đang tải...</div></div>';
+            if (!apiKey || !apiSecret) {
+                alert('Vui lòng nhập API Key và Secret');
                 return;
-            }
-            
-            const stats = [
-                { 
-                    label: 'Số Dư', 
-                    value: systemInfo.balance ? `$${systemInfo.balance.toFixed(2)}` : '$0.00', 
-                    class: 'neutral' 
-                },
-                { 
-                    label: 'Tổng Bot', 
-                    value: systemInfo.total_bots || 0, 
-                    class: 'neutral' 
-                },
-                { 
-                    label: 'Đang Tìm Coin', 
-                    value: systemInfo.searching_bots || 0, 
-                    class: 'neutral' 
-                },
-                { 
-                    label: 'Đang Trade', 
-                    value: systemInfo.trading_bots || 0, 
-                    class: 'positive' 
-                },
-                { 
-                    label: 'Vị Thế LONG', 
-                    value: systemInfo.total_long_count || 0, 
-                    class: 'positive' 
-                },
-                { 
-                    label: 'Vị Thế SHORT', 
-                    value: systemInfo.total_short_count || 0, 
-                    class: 'negative' 
-                },
-                { 
-                    label: 'PnL LONG', 
-                    value: systemInfo.total_long_pnl ? `$${systemInfo.total_long_pnl.toFixed(2)}` : '$0.00', 
-                    class: (systemInfo.total_long_pnl || 0) >= 0 ? 'positive' : 'negative' 
-                },
-                { 
-                    label: 'PnL SHORT', 
-                    value: systemInfo.total_short_pnl ? `$${systemInfo.total_short_pnl.toFixed(2)}` : '$0.00',
-                    class: (systemInfo.total_short_pnl || 0) >= 0 ? 'positive' : 'negative' 
-                }
-            ];
-
-            statsGrid.innerHTML = stats.map(stat => `
-                <div class="stat-card">
-                    <div class="stat-value ${stat.class}">${stat.value}</div>
-                    <div class="stat-label">${stat.label}</div>
-                </div>
-            `).join('');
-        }
-
-        function updateBotList(botsInfo) {
-            const botList = document.getElementById('botList');
-            
-            if (!botsInfo || botsInfo.length === 0) {
-                botList.innerHTML = `
-                    <div class="empty-state">
-                        <div class="icon">🤖</div>
-                        <div>Chưa có bot nào đang chạy</div>
-                        <div style="font-size: 11px; margin-top: 5px;">Thêm bot mới để bắt đầu giao dịch</div>
-                    </div>
-                `;
-                return;
-            }
-
-            botList.innerHTML = botsInfo.map(bot => `
-                <div class="bot-card">
-                    <div class="bot-header">
-                        <div class="bot-id">${bot.bot_id}</div>
-                        <div class="bot-status status-${bot.status}">
-                            ${getStatusText(bot.status)}
-                        </div>
-                    </div>
-                    <div class="bot-details">
-                        <div><span class="detail-label">Symbol:</span> ${bot.symbol || 'Đang tìm...'}</div>
-                        <div><span class="detail-label">Trạng thái:</span> ${bot.side ? `${bot.side} - ${Math.abs(bot.qty)}` : 'Chờ tín hiệu'}</div>
-                        <div>
-                            <span class="detail-label">Đòn bẩy:</span> ${bot.lev}x | 
-                            <span class="detail-label">Vốn:</span> ${bot.percent}%
-                        </div>
-                        <div>
-                            <span class="detail-label">TP/SL:</span> ${bot.tp}%/${bot.sl}% 
-                            ${bot.roi_trigger ? `| <span class="detail-label">ROI:</span> ${bot.roi_trigger}%` : ''}
-                        </div>
-                        
-                        ${bot.entry ? `
-                            <div>
-                                <span class="detail-label">Giá vào:</span> ${bot.entry.toFixed(4)} | 
-                                <span class="detail-label">Hiện tại:</span> ${(bot.current_price || 0).toFixed(4)}
-                            </div>
-                        ` : ''}
-                        
-                        ${bot.average_down_count > 0 ? `
-                            <div><span class="detail-label">Số lần nhồi:</span> ${bot.average_down_count}</div>
-                        ` : ''}
-                    </div>
-                    <button class="btn btn-danger" onclick="stopBot('${bot.bot_id}')" style="padding: 8px 12px; font-size: 12px;">
-                        ⛔ Dừng Bot
-                    </button>
-                </div>
-            `).join('');
-        }
-
-        function getStatusText(status) {
-            const statusMap = {
-                'searching': '🔍 Tìm Coin',
-                'waiting': '🟡 Chờ Tín Hiệu', 
-                'open': '🟢 Đang Trade'
-            };
-            return statusMap[status] || status;
-        }
-
-        // Button handlers
-        document.getElementById('addBotBtn').addEventListener('click', async () => {
-            const botData = {
-                lev: parseInt(document.getElementById('leverage').value),
-                percent: parseFloat(document.getElementById('percent').value),
-                tp: parseFloat(document.getElementById('takeProfit').value),
-                sl: parseFloat(document.getElementById('stopLoss').value),
-                bot_mode: currentTab,
-                bot_count: currentTab === 'dynamic' ? parseInt(document.getElementById('botCount').value) : 1
-            };
-
-            if (currentTab === 'static') {
-                const symbol = document.getElementById('symbol').value.trim();
-                if (!symbol) {
-                    alert('Vui lòng nhập symbol cho bot tĩnh');
-                    return;
-                }
-                botData.symbol = symbol;
-            }
-
-            const roiTrigger = document.getElementById('roiTrigger').value;
-            if (roiTrigger) {
-                botData.roi_trigger = parseFloat(roiTrigger);
             }
 
             try {
-                const response = await fetch('/api/add-bot', {
+                const response = await fetch('/api/connect', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify(botData)
+                    body: JSON.stringify({
+                        api_key: apiKey,
+                        api_secret: apiSecret
+                    })
                 });
 
                 const result = await response.json();
-                alert(result.message);
                 
-                // Làm mới danh sách bot
-                if (ws && ws.readyState === WebSocket.OPEN) {
-                    ws.send('refresh');
+                if (result.success) {
+                    alert('✅ ' + result.message);
+                    loadSystemInfo();
+                } else {
+                    alert('❌ ' + result.message);
                 }
             } catch (error) {
-                alert('Lỗi khi thêm bot: ' + error.message);
-            }
-        });
-
-        document.getElementById('stopAllBtn').addEventListener('click', async () => {
-            if (confirm('Bạn có chắc muốn dừng TẤT CẢ bot?')) {
-                try {
-                    const response = await fetch('/api/stop-bot', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify({ bot_id: 'all' })
-                    });
-
-                    const result = await response.json();
-                    alert(result.message);
-                    
-                    // Làm mới danh sách bot
-                    if (ws && ws.readyState === WebSocket.OPEN) {
-                        ws.send('refresh');
-                    }
-                } catch (error) {
-                    alert('Lỗi khi dừng bot: ' + error.message);
-                }
-            }
-        });
-
-        async function stopBot(botId) {
-            if (confirm('Bạn có chắc muốn dừng bot này?')) {
-                try {
-                    const response = await fetch('/api/stop-bot', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify({ bot_id: botId })
-                    });
-
-                    const result = await response.json();
-                    alert(result.message);
-                    
-                    // Làm mới danh sách bot
-                    if (ws && ws.readyState === WebSocket.OPEN) {
-                        ws.send('refresh');
-                    }
-                } catch (error) {
-                    alert('Lỗi khi dừng bot: ' + error.message);
-                }
+                alert('❌ Lỗi kết nối: ' + error.message);
             }
         }
 
-        // PWA Install Prompt
-        window.addEventListener('beforeinstallprompt', (e) => {
-            e.preventDefault();
-            deferredPrompt = e;
-            
-            // Hiển thị prompt install sau 5 giây
-            setTimeout(() => {
-                if (deferredPrompt) {
-                    document.getElementById('installPrompt').style.display = 'block';
-                }
-            }, 5000);
-        });
-
-        document.getElementById('installButton').addEventListener('click', async () => {
-            if (!deferredPrompt) return;
-            
-            deferredPrompt.prompt();
-            const { outcome } = await deferredPrompt.userChoice;
-            
-            if (outcome === 'accepted') {
-                document.getElementById('installPrompt').style.display = 'none';
-            }
-            
-            deferredPrompt = null;
-        });
-
-        document.getElementById('dismissInstall').addEventListener('click', () => {
-            document.getElementById('installPrompt').style.display = 'none';
-        });
-
-        window.addEventListener('appinstalled', () => {
-            document.getElementById('installPrompt').style.display = 'none';
-            deferredPrompt = null;
-        });
-
-        // Khởi tạo ứng dụng
-        function initializeApp() {
-            connectWebSocket();
-            
-            // Load dữ liệu ban đầu
-            fetch('/api/system-info')
-                .then(response => response.json())
-                .then(data => updateStats(data))
-                .catch(error => console.error('Error loading system info:', error));
+        async function loadSystemInfo() {
+            try {
+                const response = await fetch('/api/system-info');
+                const data = await response.json();
                 
-            fetch('/api/bots')
-                .then(response => response.json())
-                .then(data => updateBotList(data))
-                .catch(error => console.error('Error loading bots:', error));
+                document.getElementById('status').innerHTML = `
+                    <p>💰 Số dư: $${data.balance}</p>
+                    <p>🤖 Tổng bot: ${data.total_bots}</p>
+                    <p>🟢 Đang trade: ${data.trading_bots}</p>
+                    <p>📈 Tổng PnL: $${data.total_unrealized_pnl}</p>
+                    ${data.test_mode ? '<p><em>🔧 Đang chạy chế độ test</em></p>' : ''}
+                `;
+            } catch (error) {
+                document.getElementById('status').innerHTML = '<p>❌ Lỗi tải thông tin hệ thống</p>';
+            }
         }
 
-        // Khởi chạy ứng dụng
-        initializeApp();
+        // Load system info khi trang được tải
+        loadSystemInfo();
     </script>
 </body>
 </html>
