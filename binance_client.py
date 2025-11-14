@@ -9,7 +9,7 @@ import threading
 import logging
 import urllib.request
 import urllib.error
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from collections import defaultdict
 
 def setup_logging():
@@ -28,7 +28,6 @@ logger = setup_logging()
 ssl._create_default_https_context = ssl._create_unverified_context
 
 def sign(query, api_secret):
-    "Lấy chữ ký"
     try:
         return hmac.new(api_secret.encode(), query.encode(), hashlib.sha256).hexdigest()
     except Exception as e:
@@ -70,10 +69,7 @@ def binance_api_request(url, method='GET', params=None, headers=None):
                     
         except urllib.error.HTTPError as e:
             if e.code == 451:
-                logger.error(f"❌ Lỗi 451: Truy cập bị chặn - Có thể do hạn chế địa lý. Vui lòng kiểm tra VPN/proxy.")
-                if "fapi.binance.com" in url:
-                    new_url = url.replace("fapi.binance.com", "fapi.binance.com")
-                    logger.info(f"Thử URL thay thế: {new_url}")
+                logger.error(f"❌ Lỗi 451: Truy cập bị chặn")
                 return None
             else:
                 logger.error(f"Lỗi HTTP ({e.code}): {e.reason}")            
@@ -97,7 +93,6 @@ def get_all_usdc_pairs(limit=100):
         url = "https://fapi.binance.com/fapi/v1/exchangeInfo"
         data = binance_api_request(url)
         if not data:
-            logger.warning("Không lấy được dữ liệu từ Binance, trả về danh sách rỗng")
             return []
         
         usdc_pairs = []
@@ -106,11 +101,10 @@ def get_all_usdc_pairs(limit=100):
             if symbol.endswith('USDC') and symbol_info.get('status') == 'TRADING':
                 usdc_pairs.append(symbol)
         
-        logger.info(f"✅ Lấy được {len(usdc_pairs)} coin USDC từ Binance")
         return usdc_pairs[:limit] if limit else usdc_pairs
         
     except Exception as e:
-        logger.error(f"❌ Lỗi lấy danh sách coin từ Binance: {str(e)}")
+        logger.error(f"❌ Lỗi lấy danh sách coin: {str(e)}")
         return []
 
 def _last_closed_1m_quote_volume(symbol):
@@ -120,11 +114,10 @@ def _last_closed_1m_quote_volume(symbol):
     )
     if not data or len(data) < 2:
         return None
-    k = data[-2]               # nến 1m đã đóng gần nhất
-    return float(k[7])         # quoteVolume (USDC)
+    k = data[-2]
+    return float(k[7])
 
 def get_max_leverage(symbol, api_key, api_secret):
-    """Lấy đòn bẩy tối đa cho một symbol"""
     try:
         url = "https://fapi.binance.com/fapi/v1/exchangeInfo"
         data = binance_api_request(url)
@@ -144,9 +137,7 @@ def get_max_leverage(symbol, api_key, api_secret):
         return 1
         
 def get_step_size(symbol, api_key, api_secret):
-    "Lấy bước nhảy nhỏ nhất của từng symbol"
     if not symbol:
-        logger.error("❌ Lỗi: Symbol là None khi lấy step size")
         return 0.001
     url = "https://fapi.binance.com/fapi/v1/exchangeInfo"
     try:
@@ -163,9 +154,7 @@ def get_step_size(symbol, api_key, api_secret):
     return 0.001
 
 def set_leverage(symbol, lev, api_key, api_secret):
-    "Lấy đòn bẩy"
     if not symbol:
-        logger.error("❌ Lỗi: Symbol là None khi set leverage")
         return False
     try:
         ts = int(time.time() * 1000)
@@ -190,7 +179,6 @@ def set_leverage(symbol, lev, api_key, api_secret):
         return False
 
 def get_balance(api_key, api_secret):
-    """Lấy số dư KHẢ DỤNG (availableBalance) để tính toán khối lượng"""
     try:
         ts = int(time.time() * 1000)
         params = {"timestamp": ts}
@@ -201,15 +189,11 @@ def get_balance(api_key, api_secret):
         
         data = binance_api_request(url, headers=headers)
         if not data:
-            logger.error("❌ Không lấy được số dư từ Binance")
             return None
             
         for asset in data['assets']:
             if asset['asset'] == 'USDC':
                 available_balance = float(asset['availableBalance'])
-                total_balance = float(asset['walletBalance'])
-                
-                logger.info(f"💰 Số dư - Khả dụng: {available_balance:.2f} USDC, Tổng: {total_balance:.2f} USDC")
                 return available_balance
         return 0
     except Exception as e:
@@ -217,9 +201,7 @@ def get_balance(api_key, api_secret):
         return None
 
 def place_order(symbol, side, qty, api_key, api_secret):
-    "Đặt lệnh trên binance theo loại market"
     if not symbol:
-        logger.error("❌ Không thể đặt lệnh: symbol là None")
         return None
     try:
         ts = int(time.time() * 1000)
@@ -241,9 +223,7 @@ def place_order(symbol, side, qty, api_key, api_secret):
     return None
 
 def cancel_all_orders(symbol, api_key, api_secret):
-    "Hủy lệnh cho symbol(chỉ các lệnh chưa mở thôi chứ không đóng được vị thế)"
     if not symbol:
-        logger.error("❌ Không thể hủy lệnh: symbol là None")
         return False
     try:
         ts = int(time.time() * 1000)
@@ -260,9 +240,7 @@ def cancel_all_orders(symbol, api_key, api_secret):
     return False
 
 def get_current_price(symbol):
-    "Lấy giá của symbol đang mở"
     if not symbol:
-        logger.error("💰 Lỗi: Symbol là None khi lấy giá")
         return 0
     try:
         url = f"https://fapi.binance.com/fapi/v1/ticker/price?symbol={symbol.upper()}"
@@ -271,15 +249,12 @@ def get_current_price(symbol):
             price = float(data['price'])
             if price > 0:
                 return price
-            else:
-                logger.error(f"💰 Giá {symbol} = 0")
         return 0
     except Exception as e:
         logger.error(f"💰 Lỗi lấy giá {symbol}: {str(e)}")
     return 0
 
 def get_positions(symbol=None, api_key=None, api_secret=None):
-    "Kiểm tra các vị thế đang có trên binance"
     try:
         ts = int(time.time() * 1000)
         params = {"timestamp": ts}
@@ -339,7 +314,6 @@ class WebSocketManager:
                 self._reconnect(symbol, callback)
             
         def on_close(ws, close_status_code, close_msg):
-            logger.info(f"WebSocket đóng {symbol}: {close_status_code} - {close_msg}")
             if not self._stop_event.is_set() and symbol in self.connections:
                 time.sleep(5)
                 self._reconnect(symbol, callback)
@@ -359,10 +333,8 @@ class WebSocketManager:
             'thread': thread,
             'callback': callback
         }
-        logger.info(f"WebSocket bắt đầu cho {symbol}")
         
     def _reconnect(self, symbol, callback):
-        logger.info(f"Kết nối lại WebSocket cho {symbol}")
         self.remove_symbol(symbol)
         self._create_connection(symbol, callback)
         
@@ -374,10 +346,9 @@ class WebSocketManager:
             if symbol in self.connections:
                 try:
                     self.connections[symbol]['ws'].close()
-                except Exception as e:
-                    logger.error(f"Lỗi đóng WebSocket {symbol}: {str(e)}")
+                except:
+                    pass
                 del self.connections[symbol]
-                logger.info(f"WebSocket đã xóa cho {symbol}")
                 
     def stop(self):
         self._stop_event.set()
