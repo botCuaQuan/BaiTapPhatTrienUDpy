@@ -4,3 +4,4 @@ pydantic
 numpy
 websocket-client
 requests
+python-multipart
