@@ -1,41 +1,110 @@
 # main.py
-from fastapi import FastAPI, HTTPException, Depends, Header
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import Optional, Dict, Tuple, Any
+import os
 import secrets
 import hashlib
+from typing import Optional, Dict, Tuple, Any
+
+from fastapi import FastAPI, HTTPException, Depends, Header
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+
+from sqlalchemy import (
+    create_engine,
+    Column,
+    Integer,
+    String,
+)
+from sqlalchemy.orm import sessionmaker, declarative_base, Session
 
 from trading_bot_lib import BotManager  # file bot của bạn
 
 
+# =========================
+# CẤU HÌNH DATABASE
+# =========================
+
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+if not DATABASE_URL:
+    # Cho dev local: nếu chưa set DATABASE_URL thì dùng SQLite
+    DATABASE_URL = "sqlite:///./local_dev.db"
+
+# Railway Postgres thường có format: postgresql://...
+# SQLAlchemy khuyến nghị dùng postgresql+psycopg2://
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+psycopg2://", 1)
+
+engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String(100), unique=True, nullable=False, index=True)
+    password_hash = Column(String(255), nullable=False)
+    api_key = Column(String(255), nullable=True)
+    api_secret = Column(String(255), nullable=True)
+
+
+# Tạo bảng nếu chưa có
+Base.metadata.create_all(bind=engine)
+
+
+def get_db() -> Session:
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+# =========================
+# APP & CORS & STATIC FRONTEND
+# =========================
+
 app = FastAPI(
-    title="Trading Bot Backend (Multi-user, Web + Mobile)",
-    version="2.0.0",
+    title="Trading Bot Backend (Multi-user, DB on Railway)",
+    version="3.0.0",
 )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],   # sau muốn siết lại domain web/app thì sửa chỗ này
+    allow_origins=["*"],  # sau này muốn thì siết lại domain
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# Serve frontend (web) từ thư mục "frontend"
+# Cấu trúc repo:
+#   main.py
+#   trading_bot_lib.py
+#   requirements.txt
+#   Procfile
+#   frontend/
+#       index.html
+#       app.js
+#       style.css
+app.mount(
+    "/",
+    StaticFiles(directory="frontend", html=True),
+    name="frontend",
+)
+
+
 # =========================
-# LƯU USER / SESSION TRONG RAM
+# LƯU SESSION + BOTMANAGER TRONG RAM
 # =========================
 
-# users[username] = {
-#   "password_hash": str,
-#   "api_key": Optional[str],
-#   "api_secret": Optional[str],
-#   "bot_manager": Optional[BotManager],
-# }
-app.state.users: Dict[str, Dict[str, Any]] = {}
+# sessions[token] = user_id
+app.state.sessions: Dict[str, int] = {}
 
-# sessions[token] = username
-app.state.sessions: Dict[str, str] = {}
+# bot_managers[user_id] = BotManager(...)
+app.state.bot_managers: Dict[int, BotManager] = {}
 
 
 def hash_password(pw: str) -> str:
@@ -50,12 +119,12 @@ def create_token() -> str:
     return secrets.token_hex(32)
 
 
-def get_user_store() -> Dict[str, Dict[str, Any]]:
-    return app.state.users
-
-
-def get_session_store() -> Dict[str, str]:
+def get_session_store() -> Dict[str, int]:
     return app.state.sessions
+
+
+def get_bot_manager_store() -> Dict[int, BotManager]:
+    return app.state.bot_managers
 
 
 # =========================
@@ -93,27 +162,26 @@ class StopBotRequest(BaseModel):
 
 
 # =========================
-# Auth helper – lấy user hiện tại từ token
+# AUTH HELPER: LẤY USER HIỆN TẠI TỪ TOKEN
 # =========================
 
 async def get_current_user(
-    x_auth_token: str = Header(None, alias="X-Auth-Token")
-) -> Tuple[str, Dict[str, Any]]:
+    x_auth_token: str = Header(None, alias="X-Auth-Token"),
+    db: Session = Depends(get_db),
+) -> Tuple[int, User]:
     if not x_auth_token:
         raise HTTPException(status_code=401, detail="Missing auth token")
 
     sessions = get_session_store()
-    users = get_user_store()
-
-    username = sessions.get(x_auth_token)
-    if not username:
+    user_id = sessions.get(x_auth_token)
+    if not user_id:
         raise HTTPException(status_code=401, detail="Invalid auth token")
 
-    user = users.get(username)
+    user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
 
-    return username, user
+    return user_id, user
 
 
 # =========================
@@ -121,73 +189,93 @@ async def get_current_user(
 # =========================
 
 @app.post("/api/register")
-async def api_register(data: RegisterRequest):
-    users = get_user_store()
+async def api_register(data: RegisterRequest, db: Session = Depends(get_db)):
     username = data.username.strip()
     password = data.password
 
     if not username or not password:
         raise HTTPException(status_code=400, detail="Thiếu username hoặc password")
 
-    if username in users:
+    existing = db.query(User).filter(User.username == username).first()
+    if existing:
         raise HTTPException(status_code=400, detail="Username đã tồn tại")
 
-    users[username] = {
-        "password_hash": hash_password(password),
-        "api_key": None,
-        "api_secret": None,
-        "bot_manager": None,
-    }
+    user = User(
+        username=username,
+        password_hash=hash_password(password),
+        api_key=None,
+        api_secret=None,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
 
-    # Đăng nhập luôn sau khi đăng ký
     token = create_token()
     sessions = get_session_store()
-    sessions[token] = username
+    sessions[token] = user.id
 
-    return {"ok": True, "token": token, "username": username}
+    return {"ok": True, "token": token, "username": user.username}
 
 
 @app.post("/api/login")
-async def api_login(data: LoginRequest):
-    users = get_user_store()
+async def api_login(data: LoginRequest, db: Session = Depends(get_db)):
     username = data.username.strip()
     password = data.password
 
-    user = users.get(username)
+    user = db.query(User).filter(User.username == username).first()
     if not user:
         raise HTTPException(status_code=400, detail="Sai username hoặc password")
 
-    if not verify_password(password, user["password_hash"]):
+    if not verify_password(password, user.password_hash):
         raise HTTPException(status_code=400, detail="Sai username hoặc password")
 
     token = create_token()
     sessions = get_session_store()
-    sessions[token] = username
+    sessions[token] = user.id
 
-    return {"ok": True, "token": token, "username": username}
+    return {"ok": True, "token": token, "username": user.username}
 
 
 @app.get("/api/me")
 async def api_me(current=Depends(get_current_user)):
-    username, user = current
-    bm: Optional[BotManager] = user.get("bot_manager")
-    has_api = bool(user.get("api_key") and user.get("api_secret") and bm is not None)
+    user_id, user = current
+    has_api = bool(user.api_key and user.api_secret)
     return {
         "ok": True,
-        "username": username,
+        "user_id": user_id,
+        "username": user.username,
         "has_api": has_api,
     }
 
 
 # =========================
-# API: CẤU HÌNH TÀI KHOẢN BINANCE (API KEY/SECRET)
+# HỖ TRỢ LẤY / TẠO BOTMANAGER THEO USER
+# =========================
+
+def get_or_create_bot_manager_for_user(user: User) -> BotManager:
+    bm_store = get_bot_manager_store()
+    bm = bm_store.get(user.id)
+    if bm is None:
+        if not (user.api_key and user.api_secret):
+            raise HTTPException(status_code=400, detail="User chưa cấu hình API Binance")
+        bm = BotManager(
+            api_key=user.api_key,
+            api_secret=user.api_secret,
+            telegram_bot_token=None,
+            telegram_chat_id=None,
+        )
+        bm_store[user.id] = bm
+    return bm
+
+
+# =========================
+# API: CẤU HÌNH TÀI KHOẢN BINANCE
 # =========================
 
 @app.get("/api/account-status")
 async def api_account_status(current=Depends(get_current_user)):
-    username, user = current
-    bm: Optional[BotManager] = user.get("bot_manager")
-    configured = bool(user.get("api_key") and user.get("api_secret") and bm is not None)
+    _, user = current
+    configured = bool(user.api_key and user.api_secret)
     return {"ok": True, "configured": configured}
 
 
@@ -195,24 +283,30 @@ async def api_account_status(current=Depends(get_current_user)):
 async def api_setup_account(
     data: SetupAccountRequest,
     current=Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
-    username, user = current
+    user_id, user = current
 
     api_key = data.api_key.strip()
     api_secret = data.api_secret.strip()
     if not api_key or not api_secret:
         raise HTTPException(status_code=400, detail="Thiếu api_key hoặc api_secret")
 
-    bm = BotManager(
+    # Lưu vào DB
+    user.api_key = api_key
+    user.api_secret = api_secret
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    # Khởi tạo BotManager mới và gán vào RAM
+    bm_store = get_bot_manager_store()
+    bm_store[user_id] = BotManager(
         api_key=api_key,
         api_secret=api_secret,
         telegram_bot_token=None,
         telegram_chat_id=None,
     )
-
-    user["api_key"] = api_key
-    user["api_secret"] = api_secret
-    user["bot_manager"] = bm
 
     return {"ok": True}
 
@@ -223,25 +317,19 @@ async def api_setup_account(
 
 @app.get("/api/summary")
 async def api_summary(current=Depends(get_current_user)):
-    username, user = current
-    bm: Optional[BotManager] = user.get("bot_manager")
-    if bm is None:
-        raise HTTPException(status_code=400, detail="Tài khoản chưa cấu hình API Binance")
-
+    _, user = current
+    bm = get_or_create_bot_manager_for_user(user)
     try:
         text = bm.get_position_summary()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
     return {"ok": True, "summary": text}
 
 
 @app.get("/api/bots")
 async def api_bots(current=Depends(get_current_user)):
-    username, user = current
-    bm: Optional[BotManager] = user.get("bot_manager")
-    if bm is None:
-        raise HTTPException(status_code=400, detail="Tài khoản chưa cấu hình API Binance")
+    _, user = current
+    bm = get_or_create_bot_manager_for_user(user)
 
     data = []
     for bot_id, bot in bm.bots.items():
@@ -259,10 +347,8 @@ async def api_add_bot(
     payload: AddBotRequest,
     current=Depends(get_current_user),
 ):
-    username, user = current
-    bm: Optional[BotManager] = user.get("bot_manager")
-    if bm is None:
-        raise HTTPException(status_code=400, detail="Tài khoản chưa cấu hình API Binance")
+    _, user = current
+    bm = get_or_create_bot_manager_for_user(user)
 
     symbol_val = (payload.symbol or "").strip().upper() or None
     roi_val = None if payload.roi_trigger <= 0 else payload.roi_trigger
@@ -288,33 +374,24 @@ async def api_stop_bot(
     data: StopBotRequest,
     current=Depends(get_current_user),
 ):
-    username, user = current
-    bm: Optional[BotManager] = user.get("bot_manager")
-    if bm is None:
-        raise HTTPException(status_code=400, detail="Tài khoản chưa cấu hình API Binance")
-
+    _, user = current
+    bm = get_or_create_bot_manager_for_user(user)
     bm.stop_bot(data.bot_id)
     return {"ok": True}
 
 
 @app.post("/api/stop-all-bots")
 async def api_stop_all_bots(current=Depends(get_current_user)):
-    username, user = current
-    bm: Optional[BotManager] = user.get("bot_manager")
-    if bm is None:
-        raise HTTPException(status_code=400, detail="Tài khoản chưa cấu hình API Binance")
-
+    _, user = current
+    bm = get_or_create_bot_manager_for_user(user)
     bm.stop_all()
     return {"ok": True}
 
 
 @app.post("/api/stop-all-coins")
 async def api_stop_all_coins(current=Depends(get_current_user)):
-    username, user = current
-    bm: Optional[BotManager] = user.get("bot_manager")
-    if bm is None:
-        raise HTTPException(status_code=400, detail="Tài khoản chưa cấu hình API Binance")
-
+    _, user = current
+    bm = get_or_create_bot_manager_for_user(user)
     bm.stop_all_coins()
     return {"ok": True}
 
