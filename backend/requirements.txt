@@ -1,7 +1,9 @@
 fastapi
 uvicorn[standard]
 pydantic
-numpy
-websocket-client
 requests
+websocket-client
+numpy
 python-multipart
+SQLAlchemy
+psycopg2-binary
