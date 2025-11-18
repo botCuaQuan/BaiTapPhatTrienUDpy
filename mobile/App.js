@@ -11,23 +11,26 @@ import {
   StyleSheet,
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
-// 🔧 SỬA DÒNG NÀY: URL backend FastAPI (PHẦN 1) trên Railway
+// 🔧 SỬA DÒNG NÀY: URL backend FastAPI trên Railway
 // Ví dụ: const API_BASE = "https://ten-backend-cua-ban.up.railway.app";
 const API_BASE = "https://your-backend-on-railway.up.railway.app";
 
-// Helper gọi API JSON
-async function apiRequest(path, options = {}) {
+// Helper API: tự thêm header X-Auth-Token nếu có
+async function apiRequest(path, { method = "GET", body = null, auth = true, token = null } = {}) {
   const url = API_BASE + path;
-  const defaultHeaders = {
+  const headers = {
     "Content-Type": "application/json",
   };
-  const opts = {
-    headers: defaultHeaders,
-    ...options,
-  };
-
-  const res = await fetch(url, opts);
+  if (auth && token) {
+    headers["X-Auth-Token"] = token;
+  }
+  const res = await fetch(url, {
+    method,
+    headers,
+    body: body ? JSON.stringify(body) : null,
+  });
   let data = {};
   try {
     data = await res.json();
@@ -35,20 +38,27 @@ async function apiRequest(path, options = {}) {
     data = {};
   }
   if (!res.ok) {
-    throw new Error(data.error || `HTTP ${res.status}`);
+    throw new Error(data.detail || data.error || `HTTP ${res.status}`);
   }
   return data;
 }
 
 export default function App() {
-  const [loading, setLoading] = useState(true);
-  const [configured, setConfigured] = useState(false);
+  const [loading, setLoading] = useState(true); // load token, check trạng thái
+  const [authToken, setAuthToken] = useState(null);
+  const [username, setUsername] = useState(null);
+  const [hasApi, setHasApi] = useState(false); // đã cấu hình API Binance chưa?
   const [statusMsg, setStatusMsg] = useState("");
 
-  // Form setup account
+  // Form login/register
+  const [authUser, setAuthUser] = useState("");
+  const [authPass, setAuthPass] = useState("");
+  const [authLoading, setAuthLoading] = useState(false);
+
+  // Form setup API
   const [apiKey, setApiKey] = useState("");
   const [apiSecret, setApiSecret] = useState("");
-  const [savingAccount, setSavingAccount] = useState(false);
+  const [savingApi, setSavingApi] = useState(false);
 
   // Dashboard data
   const [summary, setSummary] = useState("");
@@ -66,14 +76,38 @@ export default function App() {
   const [botCount, setBotCount] = useState("3");
   const [addingBot, setAddingBot] = useState(false);
 
-  // Lần đầu: kiểm tra backend đã cấu hình API chưa
+  // ============ INIT: load token từ AsyncStorage & kiểm tra trạng thái ============
   useEffect(() => {
     const init = async () => {
       try {
-        const status = await apiRequest("/api/account-status");
-        setConfigured(!!status.configured);
-      } catch (err) {
-        setStatusMsg("Không kết nối được backend: " + err.message);
+        const savedToken = await AsyncStorage.getItem("authToken");
+        const savedUsername = await AsyncStorage.getItem("username");
+        if (savedToken && savedUsername) {
+          // Thử gọi /api/me với token này
+          try {
+            const me = await apiRequest("/api/me", { auth: true, token: savedToken });
+            setAuthToken(savedToken);
+            setUsername(me.username || savedUsername);
+
+            // Kiểm tra account-status để biết đã có API Binance chưa
+            const status = await apiRequest("/api/account-status", {
+              auth: true,
+              token: savedToken,
+            });
+            setHasApi(!!status.configured);
+          } catch (err) {
+            // Token hết hạn hoặc lỗi → xóa và yêu cầu login
+            await AsyncStorage.removeItem("authToken");
+            await AsyncStorage.removeItem("username");
+            setAuthToken(null);
+            setUsername(null);
+            setHasApi(false);
+          }
+        } else {
+          setAuthToken(null);
+          setUsername(null);
+          setHasApi(false);
+        }
       } finally {
         setLoading(false);
       }
@@ -81,14 +115,32 @@ export default function App() {
     init();
   }, []);
 
-  // Lấy summary + bots
+  // Khi đã có token + đã cấu hình API thì tự load dashboard
+  useEffect(() => {
+    if (authToken && hasApi) {
+      loadDashboardData();
+    }
+  }, [authToken, hasApi]);
+
+  // ============ HÀM TIỆN ÍCH ============
+
+  const handleLogout = async () => {
+    setAuthToken(null);
+    setUsername(null);
+    setHasApi(false);
+    setSummary("");
+    setBots([]);
+    await AsyncStorage.removeItem("authToken");
+    await AsyncStorage.removeItem("username");
+  };
+
   const loadDashboardData = async () => {
+    if (!authToken) return;
     setRefreshing(true);
     try {
-      const s = await apiRequest("/api/summary");
+      const s = await apiRequest("/api/summary", { auth: true, token: authToken });
       setSummary(s.summary || "");
-
-      const b = await apiRequest("/api/bots");
+      const b = await apiRequest("/api/bots", { auth: true, token: authToken });
       setBots(b.bots || []);
       setStatusMsg("");
     } catch (err) {
@@ -98,42 +150,104 @@ export default function App() {
     }
   };
 
-  // Khi đã configured rồi thì load data
-  useEffect(() => {
-    if (configured) {
-      loadDashboardData();
-    }
-  }, [configured]);
+  // ============ AUTH: ĐĂNG NHẬP / ĐĂNG KÝ ============
 
-  // Setup account
-  const handleSetupAccount = async () => {
+  const handleLogin = async () => {
+    if (!authUser.trim() || !authPass) {
+      setStatusMsg("Không được để trống username/password.");
+      return;
+    }
+    setAuthLoading(true);
+    setStatusMsg("");
+    try {
+      const data = await apiRequest("/api/login", {
+        method: "POST",
+        body: { username: authUser.trim(), password: authPass },
+        auth: false,
+      });
+      setAuthToken(data.token);
+      setUsername(data.username);
+      await AsyncStorage.setItem("authToken", data.token);
+      await AsyncStorage.setItem("username", data.username);
+
+      // Check xem đã cấu hình API chưa
+      const status = await apiRequest("/api/account-status", {
+        auth: true,
+        token: data.token,
+      });
+      setHasApi(!!status.configured);
+      setStatusMsg("");
+    } catch (err) {
+      setStatusMsg("Lỗi đăng nhập: " + err.message);
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleRegister = async () => {
+    if (!authUser.trim() || !authPass) {
+      setStatusMsg("Không được để trống username/password.");
+      return;
+    }
+    setAuthLoading(true);
+    setStatusMsg("");
+    try {
+      const data = await apiRequest("/api/register", {
+        method: "POST",
+        body: { username: authUser.trim(), password: authPass },
+        auth: false,
+      });
+      setAuthToken(data.token);
+      setUsername(data.username);
+      await AsyncStorage.setItem("authToken", data.token);
+      await AsyncStorage.setItem("username", data.username);
+
+      // Mới đăng ký thì chắc chắn chưa có API Binance
+      setHasApi(false);
+      setStatusMsg("Đăng ký thành công, hãy cấu hình API Binance.");
+    } catch (err) {
+      setStatusMsg("Lỗi đăng ký: " + err.message);
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  // ============ CẤU HÌNH API KEY / SECRET ============
+
+  const handleSetupApi = async () => {
     if (!apiKey.trim() || !apiSecret.trim()) {
       setStatusMsg("API Key và Secret không được để trống.");
       return;
     }
-    setSavingAccount(true);
+    if (!authToken) {
+      setStatusMsg("Chưa đăng nhập.");
+      return;
+    }
+    setSavingApi(true);
     setStatusMsg("");
     try {
       await apiRequest("/api/setup-account", {
         method: "POST",
-        body: JSON.stringify({
-          api_key: apiKey.trim(),
-          api_secret: apiSecret.trim(),
-        }),
+        body: { api_key: apiKey.trim(), api_secret: apiSecret.trim() },
+        auth: true,
+        token: authToken,
       });
-      setConfigured(true);
+      setHasApi(true);
       setApiKey("");
       setApiSecret("");
-      setStatusMsg("Cấu hình tài khoản thành công.");
+      setStatusMsg("Cấu hình API Binance thành công.");
+      await loadDashboardData();
     } catch (err) {
-      setStatusMsg("Lỗi lưu tài khoản: " + err.message);
+      setStatusMsg("Lỗi lưu API Binance: " + err.message);
     } finally {
-      setSavingAccount(false);
+      setSavingApi(false);
     }
   };
 
-  // Add bot
+  // ============ BOT: THÊM, DỪNG, DỪNG TẤT CẢ ============
+
   const handleAddBot = async () => {
+    if (!authToken) return;
     setAddingBot(true);
     setStatusMsg("");
     try {
@@ -149,7 +263,9 @@ export default function App() {
       };
       const res = await apiRequest("/api/add-bot", {
         method: "POST",
-        body: JSON.stringify(payload),
+        body: payload,
+        auth: true,
+        token: authToken,
       });
       if (!res.ok) {
         throw new Error("API trả về ok=false");
@@ -163,13 +279,15 @@ export default function App() {
     }
   };
 
-  // Stop 1 bot
   const handleStopBot = async (botId) => {
+    if (!authToken) return;
     setStatusMsg("");
     try {
       await apiRequest("/api/stop-bot", {
         method: "POST",
-        body: JSON.stringify({ bot_id: botId }),
+        body: { bot_id: botId },
+        auth: true,
+        token: authToken,
       });
       setStatusMsg(`Đã dừng bot: ${botId}`);
       await loadDashboardData();
@@ -178,12 +296,14 @@ export default function App() {
     }
   };
 
-  // Stop all bots
   const handleStopAllBots = async () => {
+    if (!authToken) return;
     setStatusMsg("");
     try {
       await apiRequest("/api/stop-all-bots", {
         method: "POST",
+        auth: true,
+        token: authToken,
       });
       setStatusMsg("Đã dừng tất cả bot.");
       await loadDashboardData();
@@ -192,12 +312,14 @@ export default function App() {
     }
   };
 
-  // Stop all coins
   const handleStopAllCoins = async () => {
+    if (!authToken) return;
     setStatusMsg("");
     try {
       await apiRequest("/api/stop-all-coins", {
         method: "POST",
+        auth: true,
+        token: authToken,
       });
       setStatusMsg("Đã dừng toàn bộ coin.");
       await loadDashboardData();
@@ -206,26 +328,96 @@ export default function App() {
     }
   };
 
-  // ======================= UI =======================
+  // ============ RENDER UI ============
 
   if (loading) {
     return (
       <SafeAreaView style={styles.center}>
-        <ActivityIndicator size="large" color="#facc15" />
-        <Text style={{ marginTop: 8, color: "#e5e7eb" }}>
-          Đang kiểm tra trạng thái backend...
-        </Text>
+        <ActivityIndicator size="large" />
+        <Text style={{ marginTop: 8, color: "#e5e7eb" }}>Đang tải trạng thái tài khoản...</Text>
         <StatusBar style="light" />
       </SafeAreaView>
     );
   }
 
-  // Màn hình cấu hình tài khoản (chưa có API key/secret)
-  if (!configured) {
+  // Chưa đăng nhập → màn hình login/register
+  if (!authToken || !username) {
     return (
       <SafeAreaView style={styles.container}>
         <ScrollView contentContainerStyle={styles.scrollContent}>
-          <Text style={styles.title}>⚙️ Cấu hình tài khoản Binance Futures</Text>
+          <Text style={styles.title}>🔐 Đăng nhập / Đăng ký</Text>
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Tài khoản</Text>
+            {statusMsg ? (
+              <Text
+                style={[
+                  styles.status,
+                  statusMsg.startsWith("Lỗi") ? styles.statusErr : styles.statusOk,
+                ]}
+              >
+                {statusMsg}
+              </Text>
+            ) : null}
+
+            <Text style={styles.label}>Username</Text>
+            <TextInput
+              style={styles.input}
+              value={authUser}
+              onChangeText={setAuthUser}
+              placeholder="Nhập username"
+              placeholderTextColor="#6b7280"
+            />
+
+            <Text style={styles.label}>Password</Text>
+            <TextInput
+              style={styles.input}
+              secureTextEntry
+              value={authPass}
+              onChangeText={setAuthPass}
+              placeholder="Nhập password"
+              placeholderTextColor="#6b7280"
+            />
+
+            <View style={[styles.row, { marginTop: 12 }]}>
+              <TouchableOpacity
+                style={[styles.button, styles.buttonPrimary, { flex: 1 }]}
+                onPress={handleLogin}
+                disabled={authLoading}
+              >
+                {authLoading ? (
+                  <ActivityIndicator color="#0f172a" />
+                ) : (
+                  <Text style={styles.buttonText}>Đăng nhập</Text>
+                )}
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.button, styles.buttonSecondary, { flex: 1 }]}
+                onPress={handleRegister}
+                disabled={authLoading}
+              >
+                {authLoading ? (
+                  <ActivityIndicator color="#e5e7eb" />
+                ) : (
+                  <Text style={[styles.buttonText, { color: "#e5e7eb" }]}>
+                    Đăng ký & đăng nhập
+                  </Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </ScrollView>
+        <StatusBar style="light" />
+      </SafeAreaView>
+    );
+  }
+
+  // Đã login nhưng chưa cấu hình API Binance
+  if (!hasApi) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <ScrollView contentContainerStyle={styles.scrollContent}>
+          <Text style={styles.title}>⚙️ Cấu hình API Binance</Text>
+          <Text style={styles.subtitle}>User: {username}</Text>
           <View style={styles.card}>
             <Text style={styles.cardTitle}>🔑 Nhập API Key & Secret</Text>
             {statusMsg ? (
@@ -259,20 +451,28 @@ export default function App() {
               placeholderTextColor="#6b7280"
             />
 
-            <TouchableOpacity
-              style={[styles.button, styles.buttonPrimary, { marginTop: 16 }]}
-              onPress={handleSetupAccount}
-              disabled={savingAccount}
-            >
-              {savingAccount ? (
-                <ActivityIndicator color="#0f172a" />
-              ) : (
-                <Text style={styles.buttonText}>Lưu & Khởi tạo Bot Manager</Text>
-              )}
-            </TouchableOpacity>
+            <View style={[styles.row, { marginTop: 16 }]}>
+              <TouchableOpacity
+                style={[styles.button, styles.buttonPrimary, { flex: 2 }]}
+                onPress={handleSetupApi}
+                disabled={savingApi}
+              >
+                {savingApi ? (
+                  <ActivityIndicator color="#0f172a" />
+                ) : (
+                  <Text style={styles.buttonText}>Lưu API & khởi tạo bot</Text>
+                )}
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.button, styles.buttonDanger, { flex: 1 }]}
+                onPress={handleLogout}
+              >
+                <Text style={styles.buttonText}>Đăng xuất</Text>
+              </TouchableOpacity>
+            </View>
 
             <Text style={styles.note}>
-              Lưu ý: API/Secret chỉ lưu trên server backend (RAM), app mobile không lưu trữ.
+              Mỗi tài khoản đăng nhập có API & bot riêng, web và app mobile dùng chung backend.
             </Text>
           </View>
         </ScrollView>
@@ -281,14 +481,12 @@ export default function App() {
     );
   }
 
-  // Màn hình dashboard (đã có tài khoản)
+  // Đã login + đã có API → Dashboard bot
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView contentContainerStyle={styles.scrollContent}>
-        <Text style={styles.title}>🤖 Trading Bot – Mobile UI</Text>
-        <Text style={styles.subtitle}>
-          Điều khiển bot Binance Futures trực tiếp từ điện thoại.
-        </Text>
+        <Text style={styles.title}>🤖 Trading Bot – Mobile</Text>
+        <Text style={styles.subtitle}>User: {username}</Text>
 
         <View style={styles.card}>
           <Text style={styles.cardTitle}>📊 Thống kê nhanh</Text>
@@ -303,17 +501,27 @@ export default function App() {
             </Text>
           ) : null}
           {refreshing ? (
-            <ActivityIndicator color="#facc15" style={{ marginVertical: 8 }} />
+            <ActivityIndicator style={{ marginVertical: 8 }} />
           ) : (
             <Text style={styles.pre}>{summary || "Chưa có dữ liệu."}</Text>
           )}
-          <TouchableOpacity
-            style={[styles.button, styles.buttonSecondary]}
-            onPress={loadDashboardData}
-            disabled={refreshing}
-          >
-            <Text style={styles.buttonText}>🔄 Refresh summary</Text>
-          </TouchableOpacity>
+          <View style={styles.row}>
+            <TouchableOpacity
+              style={[styles.button, styles.buttonSecondary, { flex: 1 }]}
+              onPress={loadDashboardData}
+              disabled={refreshing}
+            >
+              <Text style={[styles.buttonText, { color: "#e5e7eb" }]}>
+                🔄 Refresh
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.button, styles.buttonDanger, { flex: 1 }]}
+              onPress={handleLogout}
+            >
+              <Text style={styles.buttonText}>Đăng xuất</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         <View style={styles.card}>
@@ -460,7 +668,9 @@ export default function App() {
               style={[styles.button, styles.buttonSecondary, { flex: 1 }]}
               onPress={handleStopAllCoins}
             >
-              <Text style={styles.buttonText}>⛔ Dừng toàn bộ COIN</Text>
+              <Text style={[styles.buttonText, { color: "#e5e7eb" }]}>
+                ⛔ Dừng toàn bộ COIN
+              </Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -469,6 +679,8 @@ export default function App() {
     </SafeAreaView>
   );
 }
+
+// ============ STYLES ============
 
 const styles = StyleSheet.create({
   container: {
