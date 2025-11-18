@@ -1,33 +1,135 @@
 // app.js
 
-// 🔧 SỬA DÒNG NÀY: để URL backend trên Railway
-// Ví dụ: const API_BASE = "https://ten-backend-cua-ban.up.railway.app";
-const API_BASE = ""; // nếu serve chung domain với backend thì để trống
+// 🔧 SỬA URL backend nếu cần:
+const API_BASE = ""; // VD: "https://your-backend.up.railway.app"
 
-// Helper gọi API JSON
-async function apiRequest(path, options = {}) {
+// Token auth toàn cục
+let authToken = null;
+let currentUsername = null;
+
+// Helper API
+async function apiRequest(path, { method = "GET", body = null, auth = true } = {}) {
     const url = API_BASE + path;
-    const defaultHeaders = {
+    const headers = {
         "Content-Type": "application/json",
     };
-    const opts = {
-        headers: defaultHeaders,
-        ...options,
-    };
-    const res = await fetch(url, opts);
+    if (auth && authToken) {
+        headers["X-Auth-Token"] = authToken;
+    }
+    const res = await fetch(url, {
+        method,
+        headers,
+        body: body ? JSON.stringify(body) : null,
+    });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-        throw new Error(data.error || `HTTP ${res.status}`);
+        throw new Error(data.detail || data.error || `HTTP ${res.status}`);
     }
     return data;
 }
 
 const appEl = document.getElementById("app");
 
-// Render màn hình cấu hình tài khoản (chưa nhập API)
+// ================== Màn hình AUTH ==================
+
+function renderAuthScreen(statusMsg = "") {
+    appEl.innerHTML = `
+        <h1>🔐 Đăng nhập / Đăng ký tài khoản</h1>
+        <div class="card">
+            <h2>Tài khoản</h2>
+            ${statusMsg ? `<div class="status err">${statusMsg}</div>` : ""}
+            <form id="auth-form">
+                <label>Username</label>
+                <input type="text" name="username" required />
+
+                <label>Password</label>
+                <input type="password" name="password" required />
+
+                <div style="margin-top:12px; display:flex; gap:8px; flex-wrap:wrap;">
+                    <button class="btn btn-primary" type="submit" data-action="login">Đăng nhập</button>
+                    <button class="btn btn-secondary" type="button" id="btn-register">Đăng ký & đăng nhập</button>
+                </div>
+            </form>
+        </div>
+    `;
+
+    const form = document.getElementById("auth-form");
+    const btnRegister = document.getElementById("btn-register");
+
+    form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const formData = new FormData(form);
+        const username = formData.get("username").trim();
+        const password = formData.get("password");
+
+        if (!username || !password) {
+            renderAuthScreen("Không được để trống username/password.");
+            return;
+        }
+
+        try {
+            const data = await apiRequest("/api/login", {
+                method: "POST",
+                body: { username, password },
+                auth: false,
+            });
+            authToken = data.token;
+            currentUsername = data.username;
+            localStorage.setItem("authToken", authToken);
+            localStorage.setItem("username", currentUsername);
+            await afterLogin();
+        } catch (err) {
+            renderAuthScreen("Lỗi đăng nhập: " + err.message);
+        }
+    });
+
+    btnRegister.addEventListener("click", async () => {
+        const formData = new FormData(form);
+        const username = formData.get("username").trim();
+        const password = formData.get("password");
+
+        if (!username || !password) {
+            renderAuthScreen("Không được để trống username/password.");
+            return;
+        }
+
+        try {
+            const data = await apiRequest("/api/register", {
+                method: "POST",
+                body: { username, password },
+                auth: false,
+            });
+            authToken = data.token;
+            currentUsername = data.username;
+            localStorage.setItem("authToken", authToken);
+            localStorage.setItem("username", currentUsername);
+            await afterLogin();
+        } catch (err) {
+            renderAuthScreen("Lỗi đăng ký: " + err.message);
+        }
+    });
+}
+
+// ================== Sau khi login ==================
+
+async function afterLogin() {
+    try {
+        const status = await apiRequest("/api/account-status");
+        if (status.configured) {
+            await renderDashboard();
+        } else {
+            renderSetupAccount();
+        }
+    } catch (err) {
+        renderAuthScreen("Lỗi lấy trạng thái tài khoản: " + err.message);
+    }
+}
+
+// ================== Màn hình setup API ==================
+
 function renderSetupAccount(statusMsg = "") {
     appEl.innerHTML = `
-        <h1>⚙️ Cấu hình tài khoản Binance Futures</h1>
+        <h1>⚙️ Cấu hình Binance cho tài khoản: ${currentUsername || ""}</h1>
         <div class="card">
             <h2>🔑 Nhập API Key & Secret</h2>
             ${statusMsg ? `<div class="status err">${statusMsg}</div>` : ""}
@@ -40,10 +142,19 @@ function renderSetupAccount(statusMsg = "") {
 
                 <br />
                 <button class="btn btn-primary" type="submit">Lưu & Khởi tạo Bot Manager</button>
+                <button class="btn btn-secondary" type="button" id="btn-logout">Đăng xuất</button>
             </form>
-            <p><small>Lưu ý: API/Secret chỉ lưu trên server (RAM), không ghi ra file từ frontend.</small></p>
+            <p><small>Mỗi tài khoản đăng nhập sẽ có API / bot riêng, chạy độc lập.</small></p>
         </div>
     `;
+
+    document.getElementById("btn-logout").addEventListener("click", () => {
+        authToken = null;
+        currentUsername = null;
+        localStorage.removeItem("authToken");
+        localStorage.removeItem("username");
+        renderAuthScreen();
+    });
 
     const form = document.getElementById("setup-form");
     form.addEventListener("submit", async (e) => {
@@ -51,28 +162,23 @@ function renderSetupAccount(statusMsg = "") {
         const formData = new FormData(form);
         const api_key = formData.get("api_key");
         const api_secret = formData.get("api_secret");
-
-        form.querySelector("button").disabled = true;
+        form.querySelector("button[type='submit']").disabled = true;
 
         try {
             await apiRequest("/api/setup-account", {
                 method: "POST",
-                body: JSON.stringify({ api_key, api_secret }),
+                body: { api_key, api_secret },
             });
-            // Sau khi setup xong, load dashboard
             await renderDashboard();
         } catch (err) {
-            console.error(err);
             renderSetupAccount("Không lưu được API/Secret: " + err.message);
         }
     });
 }
 
-// Render màn hình dashboard (đã cấu hình tài khoản)
-async function renderDashboard(statusMsg = "") {
-    if (!statusMsg) statusMsg = "";
+// ================== Dashboard bot (giống bản cũ, nhưng có logout) ==================
 
-    // Lấy summary & danh sách bot
+async function renderDashboard(statusMsg = "") {
     let summary = "";
     let bots = [];
 
@@ -112,8 +218,8 @@ async function renderDashboard(statusMsg = "") {
     const botsSection = botCards || "<p><small>Hiện chưa có bot nào đang chạy.</small></p>";
 
     appEl.innerHTML = `
-        <h1>🤖 Trading Bot – Web UI (Frontend)</h1>
-        <p>API Key/Secret đã được cấu hình trên backend. Bạn điều khiển bot trực tiếp tại đây.</p>
+        <h1>🤖 Trading Bot – Web UI (User: ${currentUsername || ""})</h1>
+        <p>Mỗi tài khoản có bot & API Binance riêng. Web và app mobile dùng chung token.</p>
 
         <div class="card">
             <h2>📊 Thống kê nhanh</h2>
@@ -124,6 +230,7 @@ async function renderDashboard(statusMsg = "") {
             }
             <pre>${summary}</pre>
             <button class="btn btn-secondary" id="refresh-summary">🔄 Refresh summary</button>
+            <button class="btn btn-danger" id="btn-logout">Đăng xuất</button>
         </div>
 
         <div class="card">
@@ -194,12 +301,18 @@ async function renderDashboard(statusMsg = "") {
         </div>
     `;
 
-    // Event: refresh summary
+    document.getElementById("btn-logout").addEventListener("click", () => {
+        authToken = null;
+        currentUsername = null;
+        localStorage.removeItem("authToken");
+        localStorage.removeItem("username");
+        renderAuthScreen();
+    });
+
     document.getElementById("refresh-summary").addEventListener("click", async () => {
         await renderDashboard();
     });
 
-    // Event: add bot
     document.getElementById("add-bot-form").addEventListener("submit", async (e) => {
         e.preventDefault();
         const form = e.target;
@@ -216,24 +329,22 @@ async function renderDashboard(statusMsg = "") {
             bot_count: Number(formData.get("bot_count")),
         };
 
-        form.querySelector("button").disabled = true;
+        form.querySelector("button[type='submit']").disabled = true;
 
         try {
             const res = await apiRequest("/api/add-bot", {
                 method: "POST",
-                body: JSON.stringify(payload),
+                body: payload,
             });
             if (!res.ok) {
                 throw new Error("API trả về ok=false");
             }
             await renderDashboard("Tạo bot thành công.");
         } catch (err) {
-            console.error(err);
             await renderDashboard("Lỗi tạo bot: " + err.message);
         }
     });
 
-    // Event: stop all bots
     document.getElementById("stop-all-bots").addEventListener("click", async () => {
         try {
             await apiRequest("/api/stop-all-bots", { method: "POST" });
@@ -243,7 +354,6 @@ async function renderDashboard(statusMsg = "") {
         }
     });
 
-    // Event: stop all coins
     document.getElementById("stop-all-coins").addEventListener("click", async () => {
         try {
             await apiRequest("/api/stop-all-coins", { method: "POST" });
@@ -253,7 +363,6 @@ async function renderDashboard(statusMsg = "") {
         }
     });
 
-    // Event: stop 1 bot (delegate)
     document.getElementById("bots-list").addEventListener("click", async (e) => {
         const btn = e.target.closest("button[data-action='stop-bot']");
         if (!btn) return;
@@ -264,7 +373,7 @@ async function renderDashboard(statusMsg = "") {
         try {
             await apiRequest("/api/stop-bot", {
                 method: "POST",
-                body: JSON.stringify({ bot_id: botId }),
+                body: { bot_id: botId },
             });
             await renderDashboard(`Đã dừng bot: ${botId}`);
         } catch (err) {
@@ -273,9 +382,20 @@ async function renderDashboard(statusMsg = "") {
     });
 }
 
-// Khởi động app: kiểm tra đã cấu hình tài khoản chưa
+// ================== INIT ==================
+
 async function init() {
+    authToken = localStorage.getItem("authToken");
+    currentUsername = localStorage.getItem("username");
+
+    if (!authToken) {
+        renderAuthScreen();
+        return;
+    }
+
     try {
+        const me = await apiRequest("/api/me");
+        currentUsername = me.username;
         const status = await apiRequest("/api/account-status");
         if (status.configured) {
             await renderDashboard();
@@ -283,12 +403,12 @@ async function init() {
             renderSetupAccount();
         }
     } catch (err) {
-        console.error(err);
-        appEl.innerHTML = `
-            <h1>Lỗi kết nối backend</h1>
-            <p>Không gọi được API backend: ${err.message}</p>
-            <p>Kiểm tra xem backend FastAPI (PHẦN 1) đã chạy trên Railway chưa nhé.</p>
-        `;
+        // token hết hạn / lỗi -> bắt login lại
+        authToken = null;
+        currentUsername = null;
+        localStorage.removeItem("authToken");
+        localStorage.removeItem("username");
+        renderAuthScreen("Phiên đăng nhập hết hạn, vui lòng đăng nhập lại.");
     }
 }
 
