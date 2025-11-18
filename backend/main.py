@@ -61,7 +61,7 @@ class BotConfig(Base):
     __tablename__ = "bot_configs"
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, nullable=False)
-    bot_mode = Column(String(20), nullable=False)   # static / dynamic
+    bot_mode = Column(String(20), nullable=False)
     symbol = Column(String(50), nullable=True)
     lev = Column(Integer, nullable=False)
     percent = Column(Float, nullable=False)
@@ -76,15 +76,12 @@ Base.metadata.create_all(bind=engine)
 # ==================== FASTAPI APP ====================
 app = FastAPI(title="Quan Trading Backend", version="2.0")
 
-# Cho phép frontend kết nối mọi nơi
+# CORS (cho frontend gọi API)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"], allow_credentials=True,
     allow_methods=["*"], allow_headers=["*"],
 )
-
-# Serve giao diện frontend
-app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")
 
 
 # ==================== DB Dependency ====================
@@ -105,7 +102,6 @@ def create_token(user_id: int) -> str:
     return token
 
 
-# ==================== GET CURRENT USER ====================
 async def get_current_user(
     x_auth_token: str = Header(..., alias="X-Auth-Token"),
     db: Session = Depends(get_db),
@@ -152,7 +148,6 @@ BOT_MANAGERS: Dict[int, BotManager] = {}
 
 
 def restore_bots(user: User, bm: BotManager, db: Session):
-    """ Khôi phục các bot từ DB vào RAM """
     configs = db.query(BotConfig).filter(BotConfig.user_id == user.id).all()
     for cfg in configs:
         try:
@@ -172,7 +167,6 @@ def restore_bots(user: User, bm: BotManager, db: Session):
 
 
 def get_bm(user: User, db: Session) -> BotManager:
-    """ Lấy BotManager đã tồn tại, hoặc khởi tạo mới """
     bm = BOT_MANAGERS.get(user.id)
     if bm is None:
         if not (user.api_key and user.api_secret):
@@ -195,7 +189,7 @@ def register(payload: RegisterReq, db: Session = Depends(get_db)):
     token = create_token(user.id)
     return {"token": token, "username": user.username}
 
-@app.post("/api/login")
+@app.post("/api/login")     # 👈 ĐÚNG POST rồi!
 def login(payload: LoginReq, db: Session = Depends(get_db)):
     user = db.query(User).filter(
         User.username == payload.username,
@@ -233,22 +227,19 @@ def summary(current: User = Depends(get_current_user), db: Session = Depends(get
 @app.get("/api/bots")
 def get_bots(current: User = Depends(get_current_user), db: Session = Depends(get_db)):
     configs = db.query(BotConfig).filter(BotConfig.user_id == current.id).all()
-    bots = []
-    for cfg in configs:
-        bots.append({
-            "bot_id": cfg.id,
-            "mode": cfg.bot_mode,
-            "symbol": cfg.symbol,
-            "lev": cfg.lev,
-            "percent": cfg.percent,
-            "tp": cfg.tp,
-            "sl": cfg.sl,
-            "roi_trigger": cfg.roi_trigger,
-            "bot_count": cfg.bot_count,
-            "active_coins": 0,
-            "max_coins": cfg.bot_count
-        })
-    return {"bots": bots}
+    return {"bots": [{
+        "bot_id": cfg.id,
+        "mode": cfg.bot_mode,
+        "symbol": cfg.symbol,
+        "lev": cfg.lev,
+        "percent": cfg.percent,
+        "tp": cfg.tp,
+        "sl": cfg.sl,
+        "roi_trigger": cfg.roi_trigger,
+        "bot_count": cfg.bot_count,
+        "active_coins": 0,
+        "max_coins": cfg.bot_count
+    } for cfg in configs]}
 
 
 # ==================== ADD / STOP BOT ====================
@@ -290,18 +281,6 @@ def add_bot(payload: AddBotReq, current: User = Depends(get_current_user), db: S
     return {"ok": True, "bot_id": cfg.id}
 
 
-@app.post("/api/stop-all-bots")
-def stop_all(current: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    try:
-        bm = get_bm(current, db)
-        bm.stop_all_bots()
-    except:
-        pass
-    db.query(BotConfig).filter(BotConfig.user_id == current.id).delete()
-    db.commit()
-    return {"ok": True}
-
-
 @app.post("/api/stop-bot")
 def stop_one(payload: StopBotReq, current: User = Depends(get_current_user), db: Session = Depends(get_db)):
     cfg = db.query(BotConfig).filter(
@@ -322,18 +301,28 @@ def stop_one(payload: StopBotReq, current: User = Depends(get_current_user), db:
     return {"ok": True}
 
 
-# ==================== WEBSOCKET REALTIME (giá + số dư) ====================
+@app.post("/api/stop-all-bots")
+def stop_all(current: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    try:
+        bm = get_bm(current, db)
+        bm.stop_all_bots()
+    except:
+        pass
+    db.query(BotConfig).filter(BotConfig.user_id == current.id).delete()
+    db.commit()
+    return {"ok": True}
+
+
+# ==================== WEBSOCKET REALTIME ====================
 @app.websocket("/ws/prices")
-async def ws_prices(socket: WebSocket):
-    await socket.accept()
+async def websocket_prices(websocket: WebSocket):
+    await websocket.accept()
     price = 65000.0
     balance = 1000.0
     try:
         while True:
-            # Fake realtime:
             price += random.uniform(-50, 50)
             balance += random.uniform(-1, 1)
-
             data = {
                 "symbol": "BTCUSDT",
                 "price": round(price, 2),
@@ -342,7 +331,7 @@ async def ws_prices(socket: WebSocket):
                 "balance": round(balance, 2),
                 "timestamp": int(time.time())
             }
-            await socket.send_json(data)
+            await websocket.send_json(data)
             await asyncio.sleep(1)
     except WebSocketDisconnect:
         print("🔌 Client đóng WebSocket")
@@ -350,7 +339,10 @@ async def ws_prices(socket: WebSocket):
         print("❌ WS error:", e)
 
 
-# ==================== CHẠY SERVER ====================
+# ============== MOUNT FRONTEND ĐẶT Ở CUỐI FILE ==============
+app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")
+
+# ==================== RUN SERVER ====================
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8080, reload=True)
