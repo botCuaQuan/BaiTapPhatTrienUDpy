@@ -1,4 +1,5 @@
 # backend/main.py
+
 import asyncio
 import random
 import time
@@ -21,27 +22,19 @@ from sqlalchemy.orm import declarative_base, sessionmaker, Session
 
 import secrets
 
-# 🚨 BOT MANAGER — bắt buộc có file trading_bot_lib.py
+# 🚨 BotManager (fake nếu chưa có bot thực)
 try:
     from trading_bot_lib import BotManager
 except ImportError:
-    # Nếu chưa có file thật — dùng fake để chạy UI / test hệ thống
     class BotManager:
-        def __init__(self, *args, **kwargs):
-            print("⚠ BOT MANAGER FAKE — UI vẫn chạy OK")
-        def add_bot(self, **kwargs):
-            print("📌 add_bot FAKE:", kwargs)
-        def stop_all_bots(self):
-            print("⛔ stop_all_bots FAKE")
-        def stop_all_coins(self):
-            print("🛑 stop_all_coins FAKE")
-        def stop_bot(self, bot_id):
-            print(f"🔇 stop_bot {bot_id} FAKE")
+        def __init__(self, *a, **k): pass
+        def add_bot(self, **k): pass
+        def stop_bot(self, bot_id): pass
+        def stop_all_bots(self): pass
 
 
-# ==================== DATABASE ====================
+# ================ DATABASE =================
 DATABASE_URL = "sqlite:///./app.db"
-
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(bind=engine)
 Base = declarative_base()
@@ -52,7 +45,6 @@ class User(Base):
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String(255), unique=True, nullable=False)
     password = Column(String(255), nullable=False)
-
     api_key = Column(String(255), nullable=True)
     api_secret = Column(String(255), nullable=True)
 
@@ -73,10 +65,9 @@ class BotConfig(Base):
 
 Base.metadata.create_all(bind=engine)
 
-# ==================== FASTAPI APP ====================
-app = FastAPI(title="Quan Trading Backend", version="2.0")
+# ================ FASTAPI APP =================
+app = FastAPI(title="Quan Trading Backend", version="3.0")
 
-# CORS (cho frontend gọi API)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"], allow_credentials=True,
@@ -84,7 +75,7 @@ app.add_middleware(
 )
 
 
-# ==================== DB Dependency ====================
+# ================ DB DEPENDENCY ================
 def get_db():
     db = SessionLocal()
     try:
@@ -93,14 +84,13 @@ def get_db():
         db.close()
 
 
-# ==================== TOKEN STORE ====================
-TOKEN_STORE: Dict[str, int] = {}  # token → user_id mapping
+# ================ AUTH SYSTEM =================
+TOKEN_STORE: Dict[str, int] = {}
 
-def create_token(user_id: int) -> str:
+def create_token(uid: int):
     token = secrets.token_hex(32)
-    TOKEN_STORE[token] = user_id
+    TOKEN_STORE[token] = uid
     return token
-
 
 async def get_current_user(
     x_auth_token: str = Header(..., alias="X-Auth-Token"),
@@ -108,29 +98,21 @@ async def get_current_user(
 ):
     uid = TOKEN_STORE.get(x_auth_token)
     if not uid:
-        raise HTTPException(401, detail="Token hết hạn hoặc không hợp lệ")
+        raise HTTPException(401, "Token hết hạn hoặc không hợp lệ")
 
     user = db.query(User).filter(User.id == uid).first()
     if not user:
-        raise HTTPException(401, detail="User không tồn tại")
+        raise HTTPException(401, "User không tồn tại")
     return user
 
 
-# ==================== PYDANTIC MODELS ====================
-class RegisterReq(BaseModel):
-    username: str
-    password: str
-
-class LoginReq(BaseModel):
-    username: str
-    password: str
-
-class SetupReq(BaseModel):
-    api_key: str
-    api_secret: str
-
+# ================ SCHEMAS =================
+class RegisterReq(BaseModel):   username: str; password: str
+class LoginReq(BaseModel):      username: str; password: str
+class SetupReq(BaseModel):      api_key: str; api_secret: str
+class SetSymbolReq(BaseModel):  symbol: str
 class AddBotReq(BaseModel):
-    bot_mode: str = Field(default="static")  # static / dynamic
+    bot_mode: str = "static"
     symbol: Optional[str] = None
     lev: int = 10
     percent: float = 5
@@ -138,211 +120,150 @@ class AddBotReq(BaseModel):
     sl: float = 0
     roi_trigger: float = 0
     bot_count: int = 1
-
-class StopBotReq(BaseModel):
-    bot_id: int
+class StopBotReq(BaseModel):    bot_id: int
 
 
-# ==================== BOT MANAGER STORAGE ====================
+# ================ BOT STORE =================
 BOT_MANAGERS: Dict[int, BotManager] = {}
-
+SYMBOL_STORE: Dict[int, str] = {}   # user_id -> symbol
 
 def restore_bots(user: User, bm: BotManager, db: Session):
-    configs = db.query(BotConfig).filter(BotConfig.user_id == user.id).all()
-    for cfg in configs:
-        try:
-            bm.add_bot(
-                symbol=cfg.symbol,
-                lev=cfg.lev,
-                percent=cfg.percent,
-                tp=cfg.tp,
-                sl=cfg.sl,
-                roi_trigger=cfg.roi_trigger,
-                bot_mode=cfg.bot_mode,
-                bot_count=cfg.bot_count,
-                strategy_type="RSI-volume-auto",
-            )
-        except Exception as e:
-            print("⚠ restore_bots lỗi:", e)
+    cfgs = db.query(BotConfig).filter(BotConfig.user_id == user.id).all()
+    for cfg in cfgs:
+        bm.add_bot(
+            symbol=cfg.symbol, lev=cfg.lev, percent=cfg.percent,
+            tp=cfg.tp, sl=cfg.sl, roi_trigger=cfg.roi_trigger,
+            bot_mode=cfg.bot_mode, bot_count=cfg.bot_count,
+            strategy_type="RSI-volume-auto"
+        )
 
 
-def get_bm(user: User, db: Session) -> BotManager:
+def get_bm(user: User, db: Session):
     bm = BOT_MANAGERS.get(user.id)
     if bm is None:
         if not (user.api_key and user.api_secret):
-            raise HTTPException(400, "User chưa cấu hình API Binance")
+            raise HTTPException(400, "Chưa cấu hình API Binance")
         bm = BotManager(api_key=user.api_key, api_secret=user.api_secret)
         BOT_MANAGERS[user.id] = bm
         restore_bots(user, bm, db)
     return bm
 
 
-# ==================== AUTH API ====================
+# ================ AUTH API ================
 @app.post("/api/register")
-def register(payload: RegisterReq, db: Session = Depends(get_db)):
-    if db.query(User).filter(User.username == payload.username).first():
+def register(req: RegisterReq, db: Session = Depends(get_db)):
+    if db.query(User).filter(User.username == req.username).first():
         raise HTTPException(400, "Username đã tồn tại")
-    user = User(username=payload.username, password=payload.password)
-    db.add(user)
-    db.commit()
-    db.refresh(user)
-    token = create_token(user.id)
-    return {"token": token, "username": user.username}
+    u = User(username=req.username, password=req.password)
+    db.add(u); db.commit(); db.refresh(u)
+    return {"token": create_token(u.id), "username": u.username}
 
-@app.post("/api/login")     # 👈 ĐÚNG POST rồi!
-def login(payload: LoginReq, db: Session = Depends(get_db)):
-    user = db.query(User).filter(
-        User.username == payload.username,
-        User.password == payload.password
-    ).first()
-    if not user:
-        raise HTTPException(401, "Sai username/password")
-    token = create_token(user.id)
-    return {"token": token, "username": user.username}
+@app.post("/api/login")
+def login(req: LoginReq, db: Session = Depends(get_db)):
+    u = db.query(User).filter(User.username == req.username,
+                              User.password == req.password).first()
+    if not u: raise HTTPException(401, "Sai username/password")
+    return {"token": create_token(u.id), "username": u.username}
 
 
-# ==================== ACCOUNT ====================
+# ================ ACCOUNT API ================
 @app.get("/api/account-status")
-def status(current: User = Depends(get_current_user)):
-    return {"configured": bool(current.api_key and current.api_secret)}
+def acc_status(u: User = Depends(get_current_user)):
+    return {"configured": bool(u.api_key and u.api_secret)}
 
 @app.post("/api/setup-account")
-def setup(payload: SetupReq, current: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    current.api_key = payload.api_key
-    current.api_secret = payload.api_secret
-    db.add(current)
-    db.commit()
+def setup_acc(req: SetupReq, u: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    u.api_key = req.api_key; u.api_secret = req.api_secret
+    db.add(u); db.commit()
     return {"ok": True}
 
+@app.post("/api/set-symbol")
+def set_symbol(req: SetSymbolReq, u: User = Depends(get_current_user)):
+    SYMBOL_STORE[u.id] = req.symbol.upper()
+    return {"symbol": SYMBOL_STORE[u.id], "ok": True}
 
-# ==================== SUMMARY / BOTS ====================
+
+# ================ BOT API ================
 @app.get("/api/summary")
-def summary(current: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    configs = db.query(BotConfig).filter(BotConfig.user_id == current.id).all()
-    lines = [f"Số bot đã lưu: {len(configs)}"]
-    for cfg in configs:
-        lines.append(f"- Bot #{cfg.id}: {cfg.bot_mode}, {cfg.symbol}, TP={cfg.tp}%")
+def summary(u: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    cfgs = db.query(BotConfig).filter(BotConfig.user_id == u.id).all()
+    lines = [f"Số bot: {len(cfgs)}"]
+    for c in cfgs: lines.append(f"- Bot {c.id}: {c.bot_mode}, {c.symbol}")
     return {"summary": "\n".join(lines)}
 
 @app.get("/api/bots")
-def get_bots(current: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    configs = db.query(BotConfig).filter(BotConfig.user_id == current.id).all()
+def bots(u: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    cfgs = db.query(BotConfig).filter(BotConfig.user_id == u.id).all()
     return {"bots": [{
-        "bot_id": cfg.id,
-        "mode": cfg.bot_mode,
-        "symbol": cfg.symbol,
-        "lev": cfg.lev,
-        "percent": cfg.percent,
-        "tp": cfg.tp,
-        "sl": cfg.sl,
-        "roi_trigger": cfg.roi_trigger,
-        "bot_count": cfg.bot_count,
-        "active_coins": 0,
-        "max_coins": cfg.bot_count
-    } for cfg in configs]}
+        "bot_id": c.id, "mode": c.bot_mode, "symbol": c.symbol,
+        "lev": c.lev, "percent": c.percent, "tp": c.tp, "sl": c.sl,
+        "roi_trigger": c.roi_trigger, "bot_count": c.bot_count,
+        "active_coins": 0, "max_coins": c.bot_count
+    } for c in cfgs]}
 
-
-# ==================== ADD / STOP BOT ====================
 @app.post("/api/add-bot")
-def add_bot(payload: AddBotReq, current: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    symbol = payload.symbol or None
-    roi = payload.roi_trigger if payload.roi_trigger > 0 else None
-    cfg = BotConfig(
-        user_id=current.id,
-        bot_mode=payload.bot_mode,
-        symbol=symbol,
-        lev=payload.lev,
-        percent=payload.percent,
-        tp=payload.tp,
-        sl=payload.sl,
-        roi_trigger=roi,
-        bot_count=payload.bot_count
+def add_bot(req: AddBotReq, u: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    c = BotConfig(
+        user_id=u.id, bot_mode=req.bot_mode, symbol=req.symbol,
+        lev=req.lev, percent=req.percent, tp=req.tp, sl=req.sl,
+        roi_trigger=req.roi_trigger if req.roi_trigger>0 else None,
+        bot_count=req.bot_count
     )
-    db.add(cfg)
-    db.commit()
-    db.refresh(cfg)
-
+    db.add(c); db.commit(); db.refresh(c)
     try:
-        bm = get_bm(current, db)
-        bm.add_bot(
-            symbol=symbol,
-            lev=payload.lev,
-            percent=payload.percent,
-            tp=payload.tp,
-            sl=payload.sl,
-            roi_trigger=roi,
-            bot_mode=payload.bot_mode,
-            bot_count=payload.bot_count,
-            strategy_type="RSI-volume-auto"
-        )
-    except Exception as e:
-        print("⚠ add_bot thực lỗi:", e)
-
-    return {"ok": True, "bot_id": cfg.id}
-
+        bm = get_bm(u, db)
+        bm.add_bot(symbol=req.symbol, lev=req.lev, percent=req.percent,
+                   tp=req.tp, sl=req.sl, roi_trigger=req.roi_trigger,
+                   bot_mode=req.bot_mode, bot_count=req.bot_count,
+                   strategy_type="RSI-volume-auto")
+    except: pass
+    return {"ok": True}
 
 @app.post("/api/stop-bot")
-def stop_one(payload: StopBotReq, current: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    cfg = db.query(BotConfig).filter(
-        BotConfig.id == payload.bot_id,
-        BotConfig.user_id == current.id
-    ).first()
-    if not cfg:
-        raise HTTPException(404, "Bot không tồn tại")
-
+def stop_bot(req: StopBotReq, u: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    c = db.query(BotConfig).filter(BotConfig.id==req.bot_id,
+                                   BotConfig.user_id==u.id).first()
+    if not c: raise HTTPException(404, "Bot không tồn tại")
     try:
-        bm = get_bm(current, db)
-        bm.stop_bot(cfg.id)
-    except:
-        pass
-
-    db.delete(cfg)
-    db.commit()
-    return {"ok": True}
+        get_bm(u, db).stop_bot(c.id)
+    except: pass
+    db.delete(c); db.commit(); return {"ok": True}
 
 
-@app.post("/api/stop-all-bots")
-def stop_all(current: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    try:
-        bm = get_bm(current, db)
-        bm.stop_all_bots()
-    except:
-        pass
-    db.query(BotConfig).filter(BotConfig.user_id == current.id).delete()
-    db.commit()
-    return {"ok": True}
-
-
-# ==================== WEBSOCKET REALTIME ====================
+# ================ REALTIME WS =================
 @app.websocket("/ws/prices")
-async def websocket_prices(websocket: WebSocket):
-    await websocket.accept()
-    price = 65000.0
-    balance = 1000.0
+async def ws_prices(ws: WebSocket):
+    await ws.accept()
+    price, balance, pnl = 65000, 1000, 0
+
     try:
         while True:
-            price += random.uniform(-50, 50)
-            balance += random.uniform(-1, 1)
+            price += random.uniform(-30, 30)
+            balance += random.uniform(-2, 2)
+            pnl += random.uniform(-4, 4)
+
             data = {
                 "symbol": "BTCUSDT",
                 "price": round(price, 2),
-                "change": round(random.uniform(-50, 50), 2),
-                "volume": round(random.uniform(10, 100), 2),
+                "volume": round(random.uniform(10, 80), 2),
                 "balance": round(balance, 2),
+                "pnl": round(pnl, 2),
+                "bot_running": random.randint(0, 3),
                 "timestamp": int(time.time())
             }
-            await websocket.send_json(data)
+            await ws.send_json(data)
             await asyncio.sleep(1)
+
     except WebSocketDisconnect:
-        print("🔌 Client đóng WebSocket")
+        print("WS client disconnected")
     except Exception as e:
-        print("❌ WS error:", e)
+        print("WS error:", e)
 
 
-# ============== MOUNT FRONTEND ĐẶT Ở CUỐI FILE ==============
+# ⚠️ STATIC FILE PHẢI ĐỂ CUỐI
 app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")
 
-# ==================== RUN SERVER ====================
+# RUN
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8080, reload=True)
