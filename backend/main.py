@@ -2,9 +2,12 @@
 import os
 import secrets
 import hashlib
+import asyncio
+import time
+import random
 from typing import Optional, Dict, Tuple, Any
 
-from fastapi import FastAPI, HTTPException, Depends, Header
+from fastapi import FastAPI, HTTPException, Depends, Header, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -14,6 +17,7 @@ from sqlalchemy import (
     Column,
     Integer,
     String,
+    Float,   # <- THÊM
 )
 from sqlalchemy.orm import sessionmaker, declarative_base, Session
 
@@ -50,7 +54,21 @@ class User(Base):
     api_secret = Column(String(255), nullable=True)
 
 
-# Tạo bảng nếu chưa có
+class BotConfig(Base):
+    __tablename__ = "bot_configs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, index=True, nullable=False)
+
+    bot_mode = Column(String(20), nullable=False)    # "static" / "dynamic"
+    symbol = Column(String(50), nullable=True)
+    lev = Column(Integer, nullable=False)
+    percent = Column(Float, nullable=False)
+    tp = Column(Float, nullable=False)
+    sl = Column(Float, nullable=False)
+    roi_trigger = Column(Float, nullable=True)
+    bot_count = Column(Integer, nullable=False, default=1)
+
 Base.metadata.create_all(bind=engine)
 
 
@@ -120,10 +138,32 @@ def get_session_store() -> Dict[str, int]:
 def get_bot_manager_store() -> Dict[int, BotManager]:
     return app.state.bot_managers
 
-
-# =========================
-# Pydantic models
-# =========================
+def restore_bots_from_db(user: User, bm: BotManager):
+    """
+    Đọc các cấu hình bot trong DB cho user và add lại vào BotManager.
+    Mục tiêu: khi deploy lên chương trình khác, chỉ cần cùng DB là bot được khởi tạo lại.
+    """
+    db = SessionLocal()
+    try:
+        configs = db.query(BotConfig).filter(BotConfig.user_id == user.id).all()
+        for cfg in configs:
+            try:
+                bm.add_bot(
+                    symbol=cfg.symbol,
+                    lev=cfg.lev,
+                    percent=cfg.percent,
+                    tp=cfg.tp,
+                    sl=cfg.sl,
+                    roi_trigger=cfg.roi_trigger,
+                    strategy_type="Hệ-thống-RSI-Khối-lượng",
+                    bot_mode=cfg.bot_mode,
+                    bot_count=cfg.bot_count,
+                )
+            except Exception:
+                # Nếu có cấu hình cũ không còn phù hợp nữa thì bỏ qua
+                continue
+    finally:
+        db.close()
 
 class RegisterRequest(BaseModel):
     username: str
@@ -259,7 +299,12 @@ def get_or_create_bot_manager_for_user(user: User) -> BotManager:
             telegram_chat_id=None,
         )
         bm_store[user.id] = bm
+
+        # 🔁 Khôi phục lại các bot từ DB
+        restore_bots_from_db(user, bm)
+
     return bm
+
 
 
 # =========================
@@ -340,6 +385,7 @@ async def api_bots(current=Depends(get_current_user)):
 async def api_add_bot(
     payload: AddBotRequest,
     current=Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
     _, user = current
     bm = get_or_create_bot_manager_for_user(user)
@@ -359,6 +405,22 @@ async def api_add_bot(
         bot_mode=bot_mode,
         bot_count=payload.bot_count,
     )
+
+    # Lưu cấu hình bot vào DB để sau này khôi phục
+    if ok:
+        cfg = BotConfig(
+            user_id=user.id,
+            bot_mode=bot_mode,
+            symbol=symbol_val,
+            lev=payload.lev,
+            percent=payload.percent,
+            tp=payload.tp,
+            sl=payload.sl,
+            roi_trigger=roi_val,
+            bot_count=payload.bot_count,
+        )
+        db.add(cfg)
+        db.commit()
 
     return {"ok": bool(ok)}
 
@@ -389,6 +451,31 @@ async def api_stop_all_coins(current=Depends(get_current_user)):
     bm.stop_all_coins()
     return {"ok": True}
 
+@app.websocket("/ws/prices")
+async def websocket_prices(websocket: WebSocket):
+    """
+    WebSocket fake price (demo). Sau này bạn chỉ cần thay phần random
+    bằng dữ liệu Binance là xong.
+    """
+    await websocket.accept()
+    try:
+        price = 65000.0
+        while True:
+            delta = random.uniform(-50, 50)
+            price = max(1, price + delta)
+
+            data = {
+                "symbol": "BTCUSDT",
+                "price": round(price, 2),
+                "change": round(delta, 2),
+                "volume": round(random.uniform(10, 100), 2),
+                "timestamp": int(time.time()),
+            }
+
+            await websocket.send_json(data)
+            await asyncio.sleep(1)
+    except WebSocketDisconnect:
+        print("Client disconnected /ws/prices")
 
 app.mount(
     "/",
