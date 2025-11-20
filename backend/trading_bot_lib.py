@@ -37,11 +37,12 @@ def _last_closed_1m_quote_volume(symbol):
 # ========== CẤU HÌNH LOGGING ==========
 def setup_logging():
     logger = logging.getLogger("trading_bot_lib")
-    logger.setLevel(logging.WARNING)  # chỉ log WARNING/ERROR trở lên
+    logger.setLevel(logging.INFO)  # <-- ĐỔI WARNING -> INFO
 
     if not logger.handlers:
         ch = logging.StreamHandler()
-        ch.setLevel(logging.WARNING)
+        ch.setLevel(logging.INFO)  # <-- Đổi luôn
+
         formatter = logging.Formatter(
             '%(asctime)s - %(levelname)s - %(name)s - %(message)s'
         )
@@ -49,13 +50,12 @@ def setup_logging():
         logger.addHandler(ch)
 
         fh = logging.FileHandler("trading_bot_errors.log", encoding="utf-8")
-        fh.setLevel(logging.WARNING)
+        fh.setLevel(logging.INFO)
         fh.setFormatter(formatter)
         logger.addHandler(fh)
 
     return logger
 
-logger = setup_logging()
 
 # ========== HÀM HỖ TRỢ TELEGRAM ==========
 def escape_html(text: str) -> str:
@@ -638,7 +638,7 @@ class SmartCoinFinder:
         rsi = 100 - (100 / (1 + rs))
         return rsi
     
-    def get_rsi_signal(self, symbol, volume_threshold=20):
+    def get_rsi_signal(self, symbol, volume_threshold=9):
         """
         Logic RSI + khối lượng MỚI theo đúng 6 điều kiện bạn yêu cầu.
         """
@@ -705,11 +705,11 @@ class SmartCoinFinder:
     
     def get_entry_signal(self, symbol):
         """Tín hiệu vào lệnh dùng RSI + volume"""
-        return self.get_rsi_signal(symbol, volume_threshold=20)
+        return self.get_rsi_signal(symbol, volume_threshold=9)
     
     def get_exit_signal(self, symbol):
         """Tín hiệu thoát lệnh (có thể dùng threshold khác)"""
-        return self.get_rsi_signal(symbol, volume_threshold=40)
+        return self.get_rsi_signal(symbol, volume_threshold=20)
     
     def has_existing_position(self, symbol):
         """Kiểm tra xem symbol đã có vị thế trên Binance chưa"""
