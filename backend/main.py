@@ -1,4 +1,5 @@
 # backend/main.py
+import traceback
 import asyncio
 import random
 import time
@@ -186,12 +187,28 @@ def get_bm(user: User, db: Session) -> BotManager:
         api_key = user.api_key
         api_secret = user.api_secret
         if not api_key or not api_secret:
-            raise HTTPException(400, "Chưa thiết lập API Key/Secret cho tài khoản này")
+            # Chưa lưu API → báo lỗi rõ ràng
+            raise HTTPException(
+                status_code=400,
+                detail="Chưa thiết lập API Key/Secret cho tài khoản này. Vào mục 'API Binance' để lưu."
+            )
 
-        bm = BotManager(api_key=api_key, api_secret=api_secret)
+        try:
+            # Khởi tạo BotManager thật (từ trading_bot_lib)
+            bm = BotManager(api_key=api_key, api_secret=api_secret)
+        except Exception as e:
+            # Bắt mọi lỗi trong __init__ (sai key, lỗi lib, v.v.)
+            print("❌ Lỗi khởi tạo BotManager:", e)
+            traceback.print_exc()
+            raise HTTPException(
+                status_code=400,
+                detail=f"Lỗi khởi tạo BotManager: {e}"
+            )
+
         BOT_MANAGERS[user.id] = bm
         restore_bots(user, bm, db)
     return bm
+
 
 
 # ==================== AUTH API ====================
@@ -360,6 +377,7 @@ def bot_start(
     current: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    # 1. Lấy cấu hình bot gần nhất
     cfg = (
         db.query(BotConfig)
         .filter(BotConfig.user_id == current.id)
@@ -367,24 +385,44 @@ def bot_start(
         .first()
     )
     if not cfg:
-        raise HTTPException(400, "Chưa có cấu hình bot, hãy lưu config trước")
+        raise HTTPException(
+            status_code=400,
+            detail="Chưa có cấu hình bot, hãy vào mục 'Cấu hình bot' và bấm Lưu trước."
+        )
 
+    # 2. Lấy BotManager (đã có try/except trong get_bm)
     bm = get_bm(current, db)
-    ok = bm.add_bot(
-        symbol=cfg.symbol,
-        lev=cfg.lev,
-        percent=cfg.percent,
-        tp=cfg.tp,
-        sl=cfg.sl,
-        roi_trigger=cfg.roi_trigger,
-        bot_mode=cfg.bot_mode,
-        bot_count=cfg.bot_count,
-        strategy_type="RSI-volume-auto",
-    )
+
+    # 3. Gọi add_bot nhưng bắt hết lỗi lại, không để 500
+    try:
+        ok = bm.add_bot(
+            symbol=cfg.symbol,
+            lev=cfg.lev,
+            percent=cfg.percent,
+            tp=cfg.tp,
+            sl=cfg.sl,
+            roi_trigger=cfg.roi_trigger,
+            bot_mode=cfg.bot_mode,
+            bot_count=cfg.bot_count,
+            strategy_type="RSI-volume-auto",
+        )
+    except Exception as e:
+        print("❌ Lỗi add_bot:", e)
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=400,
+            detail=f"Lỗi khởi động bot (add_bot): {e}"
+        )
+
     if not ok:
-        raise HTTPException(400, "Không thể khởi tạo bot (xem log server)")
+        # trading_bot_lib.add_bot trả False khi không thể tạo bot
+        raise HTTPException(
+            status_code=400,
+            detail="Không thể khởi tạo bot từ BotManager. Có thể do API Binance không kết nối được hoặc API Key sai."
+        )
 
     return {"ok": True}
+
 
 
 @app.post("/api/bot-stop")
